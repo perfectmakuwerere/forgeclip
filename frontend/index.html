@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0a0a0b" />
+  <title>ClipForge · viral shorts from long videos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+  <div id="public" hidden></div>
+  <div class="shell" id="shell" hidden>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#/" aria-label="ClipForge home"><span class="logo" data-icon="play"></span><span class="label">ClipForge</span></a>
+      <nav class="nav">
+        <a href="#/" data-nav="home"><span data-icon="home"></span><span class="label">Home</span></a>
+        <a href="#/projects" data-nav="projects"><span data-icon="folder"></span><span class="label">Projects</span></a>
+        <a href="#/analytics" data-nav="analytics"><span data-icon="chart"></span><span class="label">Analytics</span></a>
+        <a href="#/connections" data-nav="connections"><span data-icon="plug"></span><span class="label">Social accounts</span><span class="nav-dot" id="conn-dot" hidden></span></a>
+        <a href="#/billing" data-nav="billing"><span data-icon="card"></span><span class="label">Plans</span></a>
+      </nav>
+      <div class="nav nav-bottom">
+        <button type="button" id="nav-ai"><span data-icon="sparkle"></span><span class="label">AI model</span></button>
+        <button type="button" id="nav-collapse" class="only-desktop" aria-label="Collapse sidebar"><span data-icon="sidebar"></span><span class="label">Collapse</span></button>
+      </div>
+    </aside>
+
+    <div class="main-col">
+      <header class="topbar">
+        <div class="crumbs" id="crumbs"></div>
+        <div class="top-actions">
+          <button id="ai-pill" class="pill" type="button">AI: not connected</button>
+          <button id="open-settings" class="btn ghost sm" type="button"><span data-icon="sparkle"></span> Connect AI</button>
+          <button id="user-btn" class="avatar-btn" type="button" aria-label="Account menu" hidden></button>
+        </div>
+      </header>
+      <main id="view" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <!-- Settings / AI connection -->
+  <dialog id="settings" aria-labelledby="settings-h">
+    <form method="dialog" class="modal">
+      <div class="modal-head"><h2 id="settings-h">Connect an AI model</h2><button value="close" class="icon-btn" aria-label="Close" data-icon="x"></button></div>
+      <p class="muted">The AI reads your transcript and picks the moments most likely to go viral, with titles, hooks and hashtags.
+        Without one, ClipForge still finds moments from audio spikes, scene cuts and hype words.</p>
+
+      <label>Provider
+        <select id="s-provider">
+          <option value="anthropic">Claude (your Anthropic API key)</option>
+          <option value="openai_compat">Custom / self-hosted (OpenAI-compatible)</option>
+          <option value="none">No AI (signals only)</option>
+        </select>
+      </label>
+
+      <div data-for="anthropic">
+        <label>Anthropic API key
+          <input id="s-key" type="password" placeholder="sk-ant-..." autocomplete="off" />
+        </label>
+        <p class="hint">Create one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.
+          Claude Pro/Max subscriptions can't be used by third-party apps under Anthropic's terms, so an API key is required.
+          Your key is kept only in this browser and sent with each analysis. It is never saved on the server.</p>
+      </div>
+
+      <div data-for="openai_compat">
+        <label>Base URL
+          <input id="s-base" placeholder="http://localhost:11434/v1" />
+        </label>
+        <label>API key (optional)
+          <input id="s-okey" type="password" autocomplete="off" />
+        </label>
+      </div>
+
+      <label data-for="anthropic openai_compat">Model
+        <input id="s-model" placeholder="claude-sonnet-5-5" />
+      </label>
+
+      <p id="s-server" class="hint"></p>
+      <p id="s-result" class="hint" aria-live="polite"></p>
+      <div class="row end">
+        <button type="button" id="s-test" class="btn ghost">Test connection</button>
+        <button type="button" id="s-save" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Clip editor -->
+  <dialog id="editor" aria-labelledby="e-title">
+    <div class="modal wide">
+      <div class="modal-head"><h2 id="e-title">Edit clip</h2><button class="icon-btn" id="e-close" aria-label="Close" data-icon="x"></button></div>
+      <div class="editor-grid">
+        <div>
+          <div class="frame-wrap" id="e-frame">
+            <video id="e-src" playsinline muted></video>
+            <div id="e-crop" class="crop-box"></div>
+          </div>
+          <div class="row">
+            <button class="btn ghost sm" id="e-play"><span data-icon="play"></span> Play range</button>
+            <button class="btn ghost sm" id="e-set-in">Set start here</button>
+            <button class="btn ghost sm" id="e-set-out">Set end here</button>
+          </div>
+          <div class="row">
+            <label class="grow">Start (s)<input id="e-start" type="number" step="0.1" min="0" /></label>
+            <label class="grow">End (s)<input id="e-end" type="number" step="0.1" min="0" /></label>
+            <span id="e-len" class="muted"></span>
+          </div>
+          <label>Title<input id="e-name" maxlength="80" /></label>
+          <label>Hook (shown at the top for the first 3 seconds)<input id="e-hook" maxlength="80" /></label>
+          <label>Hashtags<input id="e-tags" placeholder="#gta6 #gaming" /></label>
+        </div>
+        <div>
+          <label>Format
+            <select id="e-aspect">
+              <option value="9:16">9:16 vertical (TikTok, Reels, Shorts)</option>
+              <option value="1:1">1:1 square</option>
+              <option value="4:5">4:5 feed</option>
+              <option value="16:9">16:9 landscape</option>
+            </select>
+          </label>
+          <label>Reframe
+            <select id="e-fit">
+              <option value="blur">Fit + blurred background</option>
+              <option value="crop">Crop to fill</option>
+              <option value="fit">Fit with black bars</option>
+            </select>
+          </label>
+          <label id="e-cropx-wrap">Crop position <span class="muted">(drag to keep the action in frame)</span>
+            <input id="e-cropx" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="check"><input id="e-captions" type="checkbox" /> Burn in animated captions</label>
+          <label>Caption style
+            <select id="e-style">
+              <option value="bold">Bold (yellow word pop)</option>
+              <option value="neon">Neon (green, 2 words)</option>
+              <option value="boxed">Boxed (readable on busy footage)</option>
+              <option value="minimal">Minimal</option>
+            </select>
+          </label>
+          <label>Caption height<input id="e-pos" type="range" min="0.35" max="0.92" step="0.01" /></label>
+          <label class="check"><input id="e-showhook" type="checkbox" /> Show hook text</label>
+          <div class="row end">
+            <button class="btn primary" id="e-render">Save &amp; render</button>
+          </div>
+          <div id="e-out" class="out-preview"></div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Generic modal (prompts, confirms, setup guides) -->
+  <dialog id="modal"><div class="modal" id="modal-body"></div></dialog>
+
+  <div id="menu" class="menu" role="menu" hidden></div>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
