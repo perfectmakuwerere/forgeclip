@@ -90,62 +90,89 @@
 
   <!-- Clip editor -->
   <dialog id="editor" aria-labelledby="e-title">
-    <div class="modal wide">
+    <div class="modal wide ed">
       <div class="modal-head"><h2 id="e-title">Edit clip</h2><button class="icon-btn" id="e-close" aria-label="Close" data-icon="x"></button></div>
       <div class="editor-grid">
-        <div>
+        <div class="ed-left">
           <div class="frame-wrap" id="e-frame">
-            <video id="e-src" playsinline muted></video>
+            <video id="e-src" playsinline preload="metadata"></video>
             <div id="e-crop" class="crop-box"></div>
           </div>
-          <div class="row">
-            <button class="btn ghost sm" id="e-play"><span data-icon="play"></span> Play range</button>
-            <button class="btn ghost sm" id="e-set-in">Set start here</button>
-            <button class="btn ghost sm" id="e-set-out">Set end here</button>
+          <div class="trim" aria-label="Trim">
+            <div class="trim-track" id="e-track" title="Click to jump there">
+              <div class="trim-sel" id="e-sel">
+                <button type="button" class="trim-h in" id="e-hin" aria-label="Clip start: drag or use arrow keys"></button>
+                <button type="button" class="trim-h out" id="e-hout" aria-label="Clip end: drag or use arrow keys"></button>
+              </div>
+              <div class="trim-head" id="e-head"></div>
+            </div>
+            <div class="trim-scale"><span id="e-w0"></span><b id="e-len"></b><span id="e-w1"></span></div>
           </div>
-          <div class="row">
-            <label class="grow">Start (s)<input id="e-start" type="number" step="0.1" min="0" /></label>
-            <label class="grow">End (s)<input id="e-end" type="number" step="0.1" min="0" /></label>
-            <span id="e-len" class="muted"></span>
+          <div class="trim-ctrls">
+            <button type="button" class="btn sm" id="e-play"><span data-icon="play"></span> Play clip</button>
+            <div class="nudge" role="group" aria-label="Clip start">
+              <span>Start <b id="e-in-t"></b></span>
+              <button type="button" data-n="in" data-d="-0.5" aria-label="Start 0.5 seconds earlier">−0.5s</button>
+              <button type="button" data-n="in" data-d="0.5" aria-label="Start 0.5 seconds later">+0.5s</button>
+              <button type="button" id="e-set-in" title="Start where the player is now">Set here</button>
+            </div>
+            <div class="nudge" role="group" aria-label="Clip end">
+              <span>End <b id="e-out-t"></b></span>
+              <button type="button" data-n="out" data-d="-0.5" aria-label="End 0.5 seconds earlier">−0.5s</button>
+              <button type="button" data-n="out" data-d="0.5" aria-label="End 0.5 seconds later">+0.5s</button>
+              <button type="button" id="e-set-out" title="End where the player is now">Set here</button>
+            </div>
+            <input id="e-start" type="hidden" /><input id="e-end" type="hidden" />
           </div>
-          <label>Title<input id="e-name" maxlength="80" /></label>
-          <label>Hook (shown at the top for the first 3 seconds)<input id="e-hook" maxlength="80" /></label>
-          <label>Hashtags<input id="e-tags" placeholder="#gta6 #gaming" /></label>
         </div>
-        <div>
-          <label>Format
-            <select id="e-aspect">
-              <option value="9:16">9:16 vertical (TikTok, Reels, Shorts)</option>
-              <option value="1:1">1:1 square</option>
-              <option value="4:5">4:5 feed</option>
-              <option value="16:9">16:9 landscape</option>
-            </select>
-          </label>
-          <label>Reframe
-            <select id="e-fit">
-              <option value="blur">Fit + blurred background</option>
-              <option value="crop">Crop to fill</option>
-              <option value="fit">Fit with black bars</option>
-            </select>
-          </label>
-          <label id="e-cropx-wrap">Crop position <span class="muted">(drag to keep the action in frame)</span>
-            <input id="e-cropx" type="range" min="0" max="1" step="0.01" />
-          </label>
-          <label class="check"><input id="e-captions" type="checkbox" /> Burn in animated captions</label>
-          <label>Caption style
-            <select id="e-style">
-              <option value="bold">Bold (yellow word pop)</option>
-              <option value="neon">Neon (green, 2 words)</option>
-              <option value="boxed">Boxed (readable on busy footage)</option>
-              <option value="minimal">Minimal</option>
-            </select>
-          </label>
-          <label>Caption height<input id="e-pos" type="range" min="0.35" max="0.92" step="0.01" /></label>
-          <label class="check"><input id="e-showhook" type="checkbox" /> Show hook text</label>
-          <div class="row end">
-            <button class="btn primary" id="e-render">Save &amp; render</button>
+
+        <div class="ed-right">
+          <div class="ed-tabs" role="tablist">
+            <button type="button" role="tab" data-tab="style" aria-selected="true">Style</button>
+            <button type="button" role="tab" data-tab="captions" aria-selected="false">Captions</button>
+            <button type="button" role="tab" data-tab="details" aria-selected="false">Details</button>
           </div>
-          <div id="e-out" class="out-preview"></div>
+
+          <div class="ed-pane" data-pane="style" role="tabpanel">
+            <label>Format
+              <select id="e-aspect">
+                <option value="9:16">9:16 vertical (TikTok, Reels, Shorts)</option>
+                <option value="1:1">1:1 square</option>
+                <option value="4:5">4:5 feed</option>
+                <option value="16:9">16:9 landscape</option>
+              </select>
+            </label>
+            <div id="e-look"></div>
+            <div id="e-bar-wrap" class="bar-colors" hidden>
+              <div class="look-h">Border colour</div>
+              <div class="swatch-row" id="e-bars"></div>
+            </div>
+            <label id="e-cropx-wrap">Crop position <span class="muted">(slide to keep the action in frame)</span>
+              <input id="e-cropx" type="range" min="0" max="1" step="0.01" />
+            </label>
+          </div>
+
+          <div class="ed-pane" data-pane="captions" role="tabpanel" hidden>
+            <label class="switch cap-toggle"><input type="checkbox" id="e-capon" /><span class="track"></span> Show captions on this clip</label>
+            <div id="e-capwrap">
+              <div class="cap-head"><span class="hint" style="margin:0">Fix any word, or clear a line to hide it.</span>
+                <button type="button" class="btn ghost sm" id="e-cap-reset">Reset to original</button></div>
+              <div id="e-lines" class="cap-lines"></div>
+            </div>
+          </div>
+
+          <div class="ed-pane" data-pane="details" role="tabpanel" hidden>
+            <label>Title<input id="e-name" maxlength="80" /></label>
+            <label>Hashtags<input id="e-tags" placeholder="#gaming #funny" /></label>
+            <label>Opening title <span class="muted">(shown big for the first seconds, if turned on in Style)</span>
+              <input id="e-hook" maxlength="80" placeholder="e.g. He did NOT see that coming" /></label>
+            <div id="e-out" class="out-preview"></div>
+          </div>
+
+          <div class="ed-foot">
+            <button type="button" class="btn ghost" id="e-cancel">Cancel</button>
+            <button type="button" class="btn primary" id="e-render">Save &amp; re-make clip</button>
+          </div>
         </div>
       </div>
     </div>

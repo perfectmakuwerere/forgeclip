@@ -82,3 +82,32 @@ SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
 # Stripe (subscriptions). Secret + webhook secret are server-only.
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+# Delete each project's original video (and extracted audio) this many days after import to save
+# disk. Rendered clips are kept. 0 = keep forever.
+SOURCE_RETENTION_DAYS = int(os.getenv("SOURCE_RETENTION_DAYS", "0"))
+
+# Speech-to-text speed. Beam 1 (greedy) is several times faster on CPU than 5; raise it on a GPU.
+WHISPER_BEAM = int(os.getenv("WHISPER_BEAM", "1"))
+WHISPER_THREADS = int(os.getenv("WHISPER_THREADS", "0"))     # 0 = all CPU cores
+
+# Speech-to-text provider: auto = Groq when GROQ_API_KEY is set, otherwise local Whisper.
+# local = always use this machine. Local Whisper is also the automatic backup if Groq fails.
+TRANSCRIBE_PROVIDER = os.getenv("TRANSCRIBE_PROVIDER", "auto").strip().lower()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+TRANSCRIBE_LANGUAGE = os.getenv("TRANSCRIBE_LANGUAGE", "").strip()   # e.g. "en"; empty = auto-detect
+
+# Object storage for project media (S3-compatible: Cloudflare R2, AWS S3, Backblaze B2, MinIO...).
+# With S3_BUCKET set, source videos, thumbnails, transcripts and rendered clips live in the bucket and
+# data/projects/ is only scratch space for running jobs. Leave S3_BUCKET empty to keep media on this disk.
+#   R2: S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com  S3_REGION=auto
+S3_BUCKET = os.getenv("S3_BUCKET", "").strip()
+S3_ENDPOINT = os.getenv("S3_ENDPOINT", "").strip().rstrip("/")
+S3_REGION = os.getenv("S3_REGION", "auto").strip()
+S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "").strip()
+S3_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "").strip()
+S3_PREFIX = os.getenv("S3_PREFIX", "").strip().strip("/")     # optional folder inside the bucket
+
+# Rendered short resolution (short side, in pixels): 720 = 720x1280 (fast, default), 1080 = 1080x1920.
+RENDER_QUALITY = int(os.getenv("RENDER_QUALITY", "720"))

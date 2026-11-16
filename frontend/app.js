@@ -47,6 +47,8 @@ const P = {
   eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A16.5 16.5 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>',
   card: '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20M6 15h4"/>',
+  volume: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+  volumeOff: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9.5l5 5M22 9.5l-5 5"/>',
   send: '<path d="M21 3 10 14"/><path d="M21 3l-7 18-4-7-7-4z"/>',
   drive: '<path d="M8 3h8l6 10-4 7H6l-4-7z"/><path d="M8 3l6 10h8M2 13h12l-4 7"/>',
 };
@@ -272,6 +274,87 @@ const shell = $("#shell");
 shell.classList.toggle("collapsed", lsGet("clipforge.collapsed", false));
 $("#nav-collapse").onclick = () => { const c = !shell.classList.contains("collapsed"); shell.classList.toggle("collapsed", c); lsSet("clipforge.collapsed", c); };
 
+// ============================================================ look (style) ==
+// How shorts look: caption style / position / size, layout (fill, fit+blur, fit+bars) and the optional title.
+const LOOK_DEFAULT = { style: "bold", position: "bottom", size: "m", fit: "crop", hook: false };
+const CAP_POS = { top: 0.22, middle: 0.5, bottom: 0.72 };
+let LOOK = Object.assign({}, LOOK_DEFAULT, lsGet("clipforge.look", {}));
+const saveLook = () => lsSet("clipforge.look", LOOK);
+const CAP_STYLES = [["bold", "Bold"], ["neon", "Neon"], ["boxed", "Boxed"], ["minimal", "Minimal"], ["none", "None"]];
+const FITS = [["crop", "Fill"], ["blur", "Fit + blur"], ["fit", "Fit + bars"]];
+
+function lookToRender(look, aspect, extra = {}) {
+  return {
+    ...(INFO?.render_defaults || {}), aspect: aspect || "9:16", fit: look.fit,
+    captions: look.style !== "none", caption_style: look.style === "none" ? "bold" : look.style,
+    caption_position: CAP_POS[look.position] ?? 0.72, caption_size: look.size, show_hook: !!look.hook, ...extra,
+  };
+}
+function renderToLook(s = {}) {
+  const p = +s.caption_position;
+  return {
+    style: s.captions === false ? "none" : (s.caption_style || "bold"),
+    position: p && p <= 0.35 ? "top" : p && p < 0.62 ? "middle" : "bottom",
+    size: s.caption_size || "m", fit: s.fit || "crop", hook: !!s.show_hook,
+  };
+}
+const lookSummary = l => `${l.style === "none" ? "No captions" : CAP_STYLES.find(x => x[0] === l.style)[1]} · ${FITS.find(x => x[0] === l.fit)[1]}`;
+const capSample = k => k === "none" ? "" : k === "minimal" ? `<span class="mcap cap-minimal">your captions here</span>`
+  : k === "boxed" ? `<span class="mcap cap-boxed">your <i>captions</i></span>` : `<span class="mcap cap-${k}">YOUR <i>CAPTIONS</i></span>`;
+
+function lookPickerHtml(look) {
+  return `<div class="look">
+    <div class="look-sec"><div class="look-h">Captions</div>
+      <div class="cap-tiles" role="radiogroup" aria-label="Caption style">${CAP_STYLES.map(([k, l]) => `
+        <button type="button" class="tile" data-style="${k}" aria-pressed="${look.style === k}">
+          <span class="mini">${k === "none" ? `<span class="mini-none">${icon("x")}</span>` : capSample(k)}</span><span class="tl">${l}</span></button>`).join("")}</div>
+      <div class="seg-row cap-opts">
+        <div class="seg" data-group="position" role="group" aria-label="Caption position">${["top", "middle", "bottom"].map(v =>
+          `<button type="button" data-v="${v}" aria-pressed="${look.position === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join("")}</div>
+        <div class="seg" data-group="size" role="group" aria-label="Caption size">${["s", "m", "l"].map(v =>
+          `<button type="button" data-v="${v}" aria-pressed="${look.size === v}" aria-label="${{ s: "Small", m: "Medium", l: "Large" }[v]}">${v.toUpperCase()}</button>`).join("")}</div>
+      </div>
+    </div>
+    <div class="look-sec"><div class="look-h">Layout</div>
+      <div class="fit-tiles" role="radiogroup" aria-label="Layout">${FITS.map(([k, l]) => `
+        <button type="button" class="tile" data-fit="${k}" aria-pressed="${look.fit === k}"><span class="mini fit-${k}"><span class="band"></span></span><span class="tl">${l}</span></button>`).join("")}</div>
+    </div>
+    <label class="switch look-hook"><input type="checkbox" data-hook ${look.hook ? "checked" : ""} /><span class="track"></span> Show the title for the first seconds</label>
+  </div>`;
+}
+function bindLookPicker(root, look, onChange) {
+  const el = root?.querySelector(".look"); if (!el) return;
+  const sync = () => {
+    el.dataset.pos = look.position; el.dataset.size = look.size;
+    el.classList.toggle("no-caps", look.style === "none");
+    $$("[data-style]", el).forEach(b => b.setAttribute("aria-pressed", b.dataset.style === look.style));
+    $$("[data-fit]", el).forEach(b => b.setAttribute("aria-pressed", b.dataset.fit === look.fit));
+    $$(".seg", el).forEach(g => $$("button", g).forEach(b => b.setAttribute("aria-pressed", b.dataset.v === look[g.dataset.group])));
+  };
+  el.onclick = e => {
+    const s = e.target.closest("[data-style]"), f = e.target.closest("[data-fit]"), g = e.target.closest(".seg button");
+    if (s) look.style = s.dataset.style;
+    else if (f) look.fit = f.dataset.fit;
+    else if (g) look[g.parentElement.dataset.group] = g.dataset.v;
+    else return;
+    sync(); onChange?.(look);
+  };
+  $("[data-hook]", el).onchange = e => { look.hook = e.target.checked; onChange?.(look); };
+  sync();
+}
+function openLookModal(onDone) {
+  const draft = { ...LOOK };
+  openModal(`
+    <div class="modal-head"><h2>Style your shorts</h2><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <p class="muted" style="margin-top:0">Used for every short ClipForge makes for you. You can still change single clips later.</p>
+    ${lookPickerHtml(draft)}
+    <div class="row end" style="margin-top:18px"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="look-save">Save style</button></div>`,
+    (b, finish) => {
+      bindLookPicker(b, draft);
+      $("#look-save", b).onclick = () => { Object.assign(LOOK, draft); saveLook(); finish(true); onDone?.(); toast("Style saved"); };
+    }, "look-modal");
+}
+
 // ============================================================== "create" ==
 const LENGTHS = [
   { label: "Auto (15–60s)", min: 15, max: 60 },
@@ -280,20 +363,20 @@ const LENGTHS = [
   { label: "60–90s", min: 60, max: 90 },
 ];
 const RECIPES = {
-  viral:   { label: "Viral clips", icon: "flame", mode: "analyze", style: "bold", fit: "blur", captions: true, cta: "Get clips in 1 click" },
-  gaming:  { label: "Gaming highlights", icon: "game", mode: "analyze", style: "neon", fit: "blur", captions: true, len: 1, cta: "Find highlights",
+  viral:   { label: "Viral clips", icon: "flame", mode: "analyze", captions: true, cta: "Get clips in 1 click" },
+  gaming:  { label: "Gaming highlights", icon: "game", mode: "analyze", captions: true, len: 1, cta: "Find highlights",
              context: "Gameplay footage: action, clutch plays, chases, fails and funny moments" },
-  podcast: { label: "Podcast clips", icon: "mic", mode: "analyze", style: "boxed", fit: "crop", captions: true, len: 2, cta: "Find best moments",
+  podcast: { label: "Podcast clips", icon: "mic", mode: "analyze", captions: true, len: 2, cta: "Find best moments",
              context: "Podcast or interview: strong opinions, stories and quotable lines" },
-  captions:{ label: "Captions only", icon: "cc", mode: "whole", style: "bold", fit: "blur", captions: true, cta: "Add captions" },
-  reframe: { label: "Reframe only", icon: "crop", mode: "whole", style: "bold", fit: "crop", captions: false, cta: "Reframe video" },
+  captions:{ label: "Captions only", icon: "cc", mode: "whole", captions: true, cta: "Add captions" },
+  reframe: { label: "Reframe only", icon: "crop", mode: "whole", captions: false, cta: "Reframe video" },
 };
 const prefs = Object.assign({ tab: "link", recipe: "viral", len: 0, aspect: "9:16", auto: true, folder: "" }, lsGet("clipforge.create", {}));
 const savePrefs = () => lsSet("clipforge.create", prefs);
 
 function autorunBody() {
   const r = RECIPES[prefs.recipe] || RECIPES.viral, L = LENGTHS[prefs.len] || LENGTHS[0];
-  const render = { ...(INFO?.render_defaults || {}), aspect: prefs.aspect, fit: r.fit, captions: r.captions, caption_style: r.style };
+  const render = lookToRender(LOOK, prefs.aspect, r.captions === false ? { captions: false } : {});
   if (!prefs.auto) return { mode: "none" };
   return { mode: r.mode, render, analyze: { min_len: L.min, max_len: L.max, count: 8, context: r.context || "", auto_render: true, render, llm: llmPayload() } };
 }
@@ -334,6 +417,7 @@ function createCard() {
       </div>
       <div class="copts">
         <label class="select-chip">${icon("folder")}<select id="o-folder" aria-label="Save to folder">${folderOpts}</select></label>
+        <button type="button" class="select-chip look-btn" id="o-look" title="Caption style and layout">${icon("cc")}<span>${esc(lookSummary(LOOK))}</span></button>
         <label class="select-chip">${icon("crop")}<select id="o-aspect" aria-label="Format">${["9:16", "1:1", "4:5", "16:9"].map(a => `<option ${a === prefs.aspect ? "selected" : ""}>${a}</option>`).join("")}</select></label>
         <label class="select-chip" ${r.mode !== "analyze" ? "hidden" : ""} id="o-len-wrap">${icon("clock")}<select id="o-len" aria-label="Clip length">${LENGTHS.map((l, i) => `<option value="${i}" ${i === prefs.len ? "selected" : ""}>${l.label}</option>`).join("")}</select></label>
         <span class="sep"></span>
@@ -355,6 +439,7 @@ function bindCreate(rerender) {
     savePrefs(); rerender();
   });
   $("#o-aspect").onchange = e => { prefs.aspect = e.target.value; savePrefs(); };
+  $("#o-look").onclick = () => openLookModal(() => { $("#o-look span").textContent = lookSummary(LOOK); });
   $("#o-len").onchange = e => { prefs.len = +e.target.value; savePrefs(); };
   $("#o-auto").onchange = e => { prefs.auto = e.target.checked; savePrefs(); $("#go").textContent = prefs.auto ? RECIPES[prefs.recipe].cta : "Import video"; };
   $("#o-folder").onchange = async e => {
@@ -394,30 +479,169 @@ function bindCreate(rerender) {
 }
 
 function upload(f) {
-  const bar = $("#up-prog"), txt = $("#up-txt"); bar.hidden = false;
+  const drop = $("#drop"); if (!drop) return;
+  drop.classList.add("uploading");
+  drop.onclick = drop.onkeydown = drop.ondrop = drop.ondragover = null;
+  drop.innerHTML = `<div id="up-proc" class="up-proc"></div><button type="button" class="btn ghost sm" id="up-cancel">Cancel</button>`;
+  const show = info => renderBar($("#up-proc"), info.title, info.pct);
+  show({ title: "Uploading", pct: 0 });
+  if (INFO?.direct_upload) return uploadDirect(f, show);
   const fd = new FormData(); fd.append("file", f); if (prefs.folder) fd.append("folder", prefs.folder);
   const xhr = new XMLHttpRequest();
+  let cancelled = false;
+  $("#up-cancel").onclick = e => { e.stopPropagation(); cancelled = true; xhr.abort(); toast("Upload cancelled"); route(); };
   xhr.open("POST", "/api/projects");
-  xhr.upload.onprogress = e => { if (e.lengthComputable) { const pc = (e.loaded / e.total) * 100; bar.firstElementChild.style.width = `${pc}%`; txt.textContent = `Uploading ${f.name} · ${pc.toFixed(0)}%`; } };
-  xhr.upload.onload = () => { txt.textContent = "Reading video…"; bar.classList.add("indet"); };
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    show({ title: "Uploading", pct: Math.min(99, Math.round((e.loaded / e.total) * 100)) });
+  };
+  xhr.upload.onload = () => { show({ title: "Uploading", pct: 100 }); $("#up-cancel")?.remove(); };
   xhr.onload = async () => {
-    bar.classList.remove("indet");
     if (xhr.status >= 200 && xhr.status < 300) {
       const p = JSON.parse(xhr.responseText);
       const body = autorunBody();
       if (body.mode !== "none") await api(`/api/projects/${p.id}/autorun`, { method: "POST", body }).catch(fail);
       location.hash = `#/p/${p.id}`;
-    } else { bar.hidden = true; txt.textContent = ""; let m = xhr.statusText; try { m = JSON.parse(xhr.responseText).detail; } catch {} fail(new Error(`Upload failed: ${m}`)); }
+    } else {
+      let m = xhr.statusText; try { m = JSON.parse(xhr.responseText).detail; } catch {}
+      fail(new Error(m || "Upload failed. Please try again.")); route();
+    }
   };
-  xhr.onerror = () => { bar.hidden = true; txt.textContent = ""; fail(new Error("Upload failed: connection lost")); };
+  xhr.onerror = () => { if (!cancelled) { fail(new Error("Upload interrupted. Check your connection and try again.")); route(); } };
   xhr.send(fd);
 }
+
+/** Upload straight to the storage bucket with a signed link (no size cap from the proxy in front of
+ *  the server), then tell the server it arrived. */
+async function uploadDirect(f, show) {
+  let pid = null, cancelled = false;
+  const xhr = new XMLHttpRequest();
+  const drop = () => { if (pid) api(`/api/projects/${pid}`, { method: "DELETE" }).catch(() => {}); };
+  $("#up-cancel").onclick = e => { e.stopPropagation(); cancelled = true; xhr.abort(); drop(); toast("Upload cancelled"); route(); };
+  try {
+    const { project, url, content_type } = await api("/api/projects/upload-url", {
+      method: "POST", body: { filename: f.name, size: f.size, folder: prefs.folder || null } });
+    pid = project.id;
+    if (cancelled) return drop();
+    await new Promise((resolve, reject) => {
+      xhr.open("PUT", url);
+      xhr.setRequestHeader("Content-Type", content_type);
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) show({ title: "Uploading", pct: Math.min(99, Math.round((e.loaded / e.total) * 100)) });
+      };
+      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve()
+        : reject(new Error(`Upload failed (storage said ${xhr.status}). Please try again.`));
+      xhr.onerror = () => reject(new Error("Upload interrupted. Check your connection and try again."));
+      xhr.onabort = () => reject(null);
+      xhr.send(f);
+    });
+    show({ title: "Checking video", pct: 100 }); $("#up-cancel")?.remove();
+    await api(`/api/projects/${pid}/upload-done`, { method: "POST" });
+    const body = autorunBody();
+    if (body.mode !== "none") await api(`/api/projects/${pid}/autorun`, { method: "POST", body }).catch(fail);
+    location.hash = `#/p/${pid}`;
+  } catch (err) {
+    if (cancelled || err === null) return;
+    drop(); fail(err instanceof Error ? err : new Error("Upload failed. Please try again.")); route();
+  }
+}
+
+// ============================================== friendly progress (ring) ==
+// Users never see pipeline internals (transcribing, signals, ffmpeg). They see one calm ring.
+let _ringId = 0;
+function ringSvg(pct, size) {
+  const stroke = Math.max(4, Math.round(size / 11)), r = (size - stroke) / 2, C = 2 * Math.PI * r, c = size / 2;
+  const indet = pct == null, id = `rg${++_ringId}`;
+  const off = indet ? C * 0.7 : C * (1 - Math.max(0, Math.min(100, pct)) / 100);
+  return `<svg viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c6f432"/><stop offset="1" stop-color="#22c55e"/></linearGradient></defs>
+      <circle class="trk" cx="${c}" cy="${c}" r="${r}" stroke-width="${stroke}"/>
+      <circle class="arc" cx="${c}" cy="${c}" r="${r}" stroke-width="${stroke}" stroke="url(#${id})"
+        stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>
+    </svg>`;
+}
+function ring(pct, size = 56) {
+  const indet = pct == null;
+  return `<span class="ring ${indet ? "spin" : ""}" style="width:${size}px;height:${size}px">${ringSvg(pct, size)}${
+    indet || size < 40 ? "" : `<b style="font-size:${Math.round(size * 0.22)}px">${pct}%</b>`}</span>`;
+}
+function procHtml(info, size, cls = "") {
+  return `<div class="proc ${cls}" data-size="${size}" data-indet="${info.pct == null ? 1 : 0}" role="status" aria-live="polite">
+    ${ring(info.pct, size)}
+    <div class="proc-txt"><b class="proc-t">${esc(info.title)}</b><span class="proc-s">${esc(info.sub || "")}</span>${info.extra || ""}</div>
+  </div>`;
+}
+/** Render or smoothly update a progress block inside `el` (keeps the SVG so the arc animates). */
+function renderProc(el, info, size, cls = "") {
+  if (!el) return;
+  const cur = el.querySelector(":scope > .proc");
+  if (cur && +cur.dataset.size === size && (cur.dataset.indet === "1") === (info.pct == null) && cur.className.includes(cls)) {
+    if (info.pct != null) {
+      const arc = cur.querySelector(".arc"), C = parseFloat(arc.getAttribute("stroke-dasharray"));
+      arc.setAttribute("stroke-dashoffset", (C * (1 - info.pct / 100)).toFixed(2));
+      const b = cur.querySelector(".ring b"); if (b) b.textContent = `${info.pct}%`;
+    }
+    cur.querySelector(".proc-t").textContent = info.title;
+    cur.querySelector(".proc-s").textContent = info.sub || "";
+    return;
+  }
+  el.innerHTML = procHtml(info, size, cls);
+}
+
+/** Straight green bar for transfers. pct null = indeterminate. Updates in place so it slides smoothly. */
+function renderBar(el, label, pct) {
+  if (!el) return;
+  let bar = el.querySelector(":scope > .xfer");
+  if (!bar) {
+    el.innerHTML = `<div class="xfer" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+      <div class="xfer-top"><b class="xfer-l"></b><span class="xfer-p"></span></div>
+      <div class="xfer-track"><div class="xfer-fill"></div></div></div>`;
+    bar = el.querySelector(".xfer");
+  }
+  bar.querySelector(".xfer-l").textContent = label;
+  bar.querySelector(".xfer-p").textContent = pct == null ? "" : `${pct}%`;
+  bar.classList.toggle("indet", pct == null);
+  bar.querySelector(".xfer-fill").style.width = pct == null ? "" : `${pct}%`;
+  if (pct == null) bar.removeAttribute("aria-valuenow"); else bar.setAttribute("aria-valuenow", pct);
+  bar.setAttribute("aria-label", label);
+}
+
+const _shownPct = {};
+/** Map a project's internal state to friendly, monotonic progress. */
+function phaseOf(p) {
+  const raw = Math.round((p.progress || 0) * 100);
+  const stage = p.stage || "";
+  let info;
+  if (p.status === "downloading") {
+    info = { key: "dl", title: "Downloading", sub: "", pct: raw || null };
+  } else {
+    const m = /Rendering clip (\d+)\/(\d+)/.exec(stage);
+    if (m) info = { key: "mk", title: "Creating your shorts", sub: `Short ${m[1]} of ${m[2]}`, pct: raw };
+    else if (/Waiting in line/.test(stage)) info = { key: "wait", title: "Processing your video", sub: "In line behind another video. Starts automatically.", pct: null };
+    else if (/Rendering full video/.test(stage)) info = { key: "full", title: "Creating your video", sub: "Adding captions and framing it for vertical", pct: null };
+    else info = { key: "pr", title: "Processing your video",
+      sub: raw < 35 ? "Finding the moments worth watching" : raw < 65 ? "Spotting the hooks people stop scrolling for" : "Picking your best clips",
+      pct: raw || null };
+  }
+  if (info.pct != null) {                         // never let the ring jump backwards
+    const k = `${p.id}:${info.key}`;
+    info.pct = Math.max(_shownPct[k] || 0, info.pct);
+    _shownPct[k] = info.pct;
+  }
+  return info;
+}
+const LEAVE_NOTE = `<span class="proc-note">You can leave this page. We'll keep working and your shorts will be waiting.</span>`;
+const skeletonShorts = n => `<div class="sk-shorts">${Array(n).fill('<div class="sk-short skeleton"></div>').join("")}</div>`;
 
 // ======================================================= project cards ==
 const busy = p => p.status === "downloading" || p.status === "processing" || (p.clips || []).some(c => ["rendering", "queued"].includes(c.render_state));
 function statusTag(p) {
-  if (p.status === "downloading") return `<span class="tag busy">${icon("download")} Importing ${Math.round((p.progress || 0) * 100)}%</span>`;
-  if (p.status === "processing") return `<span class="tag busy">${icon("sparkle")} ${esc((p.stage || "Processing").split(" (")[0].slice(0, 26))}</span>`;
+  if (p.status === "downloading" || p.status === "processing") {
+    const ph = phaseOf(p);
+    const label = ph.key === "dl" ? "Importing" : ph.key === "mk" || ph.key === "full" ? "Creating shorts" : "Processing";
+    if (ph.key === "dl") return `<span class="tag busy">Downloading${ph.pct != null ? ` ${ph.pct}%` : ""}</span>`;
+    return `<span class="tag busy">${ring(null, 13)} ${label}${ph.pct != null ? ` ${ph.pct}%` : ""}</span>`;
+  }
   if (p.status === "error") return `<span class="tag err">${icon("alert")} Failed</span>`;
   if (p.clips?.length) return `<span class="tag ok">${icon("scissors")} ${p.clips.length} clip${p.clips.length === 1 ? "" : "s"}</span>`;
   return "";
@@ -624,9 +848,9 @@ async function renderProject(pid) {
     </div>
     <div class="project-head">
       <div>
-        <video id="player" class="player" src="/media/${p.id}/${p.source}" controls preload="metadata"></video>
+        ${p.source_expired ? `<div class="panel expired">${icon("clock")}<div><b>Original video removed</b><p class="hint" style="margin:4px 0 0">Source videos are deleted after a while to save space. Your rendered clips below are kept and can still be downloaded. Import the video again to make new clips.</p></div></div>`
+          : `<video id="player" class="player" src="/media/${p.id}/${p.source}" controls preload="metadata"></video>`}
         <div class="heat" id="heat" title="Excitement over time (click to seek)"><canvas id="heat-c"></canvas><div class="head" id="heat-head"></div></div>
-        <div class="hint">Heat bar = audio excitement. Highlighted ranges = clips.</div>
       </div>
       <div class="panel">
         <h3>${icon("sparkle")} Find viral moments</h3>
@@ -639,7 +863,8 @@ async function renderProject(pid) {
         </div>
         <label>What is this video? (helps the AI)
           <textarea id="a-context" rows="2" placeholder="e.g. GTA 6 gameplay stream, funny police chases and fails"></textarea></label>
-        <label class="check"><input id="a-captions" type="checkbox" checked /> Animated captions</label>
+        <div class="look-wrap">${lookPickerHtml(LOOK)}
+          <button type="button" class="btn ghost sm" id="apply-all" hidden>${icon("refresh")} Apply this style to all clips</button></div>
         <label class="check"><input id="a-auto" type="checkbox" checked /> Render clips automatically</label>
         <div class="row end"><button class="btn primary" id="analyze">${p.clips.length ? "Re-analyze" : "Get clips"}</button></div>
         <div id="status" aria-live="polite"></div>
@@ -653,7 +878,8 @@ async function renderProject(pid) {
         </div>
       </div>
     </div>
-    <div class="section-head"><h2>Clips</h2><span class="muted" id="note" style="font-size:.85rem"></span></div>
+    <div class="section-head"><h2>Clips</h2><div class="row" style="margin:0"><span class="muted" id="note" style="font-size:.85rem"></span>
+      <a class="btn sm" id="dl-all" hidden href="/api/projects/${p.id}/download-all">${icon("download")} Download all</a></div></div>
     <div class="clip-grid" id="clips"></div>`;
 
   $("#del-proj").onclick = async () => { if (await confirmBox("Delete project?", "This removes the video and all its clips from this computer.")) { await api(`/api/projects/${p.id}`, { method: "DELETE" }); location.hash = "#/projects"; } };
@@ -661,6 +887,14 @@ async function renderProject(pid) {
   $("#move-proj").onclick = () => moveProject(current, route);
   $("#presets").onclick = e => { const b = e.target.closest("button"); if (!b) return; lenChoice = +b.dataset.i; $$("#presets button").forEach(x => x.classList.toggle("active", x === b)); };
   $("#analyze").onclick = () => startAnalyze(p.id);
+  bindLookPicker(view.querySelector(".look-wrap"), LOOK, saveLook);
+  $("#apply-all").onclick = async () => {
+    const n = current.clips.length;
+    if (!await confirmBox("Apply this style to all clips?", `All ${n} clip${n === 1 ? "" : "s"} will be re-made with the new captions and layout. This takes a few minutes.`, "Apply style", false)) return;
+    try { await api(`/api/projects/${p.id}/render-all`, { method: "POST", body: { settings: defaultRender() } }); refresh(); }
+    catch (e) { fail(e); }
+  };
+  if (p.source_expired) $$("#analyze, #whole, #mark-in, #mark-out").forEach(b => { b.disabled = true; });
 
   const player = $("#player");
   let markIn = null;
@@ -675,8 +909,8 @@ async function renderProject(pid) {
     const c = await api(`/api/projects/${p.id}/clips`, { method: "POST", body: { start: 0, end: p.video.duration, title: p.name } }).catch(fail);
     if (c) { await refresh(); openEditor(c.id); }
   };
-  player.ontimeupdate = () => { $("#heat-head").style.left = `${(player.currentTime / p.video.duration) * 100}%`; };
-  $("#heat").onclick = e => { const r = e.currentTarget.getBoundingClientRect(); player.currentTime = ((e.clientX - r.left) / r.width) * p.video.duration; };
+  if (player) player.ontimeupdate = () => { $("#heat-head").style.left = `${(player.currentTime / p.video.duration) * 100}%`; };
+  $("#heat").onclick = e => { if (!player) return; const r = e.currentTarget.getBoundingClientRect(); player.currentTime = ((e.clientX - r.left) / r.width) * p.video.duration; };
 
   await drawHeat(p);
   paint(p);
@@ -703,16 +937,18 @@ function renderPending(p) {
     $("#del").onclick = async () => { await api(`/api/projects/${p.id}`, { method: "DELETE" }).catch(fail); location.hash = "#/projects"; };
     return;
   }
-  const pct = Math.round((p.progress || 0) * 100);
-  view.innerHTML = `
-    <div class="panel big-state" aria-live="polite">
-      ${meta.thumbnail ? `<img class="prev" src="${esc(meta.thumbnail)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()" />` : `<div class="ico" style="background:${pl.bg}">${platSvg(p.platform, 28)}</div>`}
-      <h2>${esc(p.name)}</h2>
-      <p class="muted">${meta.uploader ? `${esc(meta.uploader)} · ` : ""}${meta.duration ? dur(meta.duration) + " · " : ""}${esc(pl.name)}</p>
-      <div class="progress ${pct ? "" : "indet"}"><div style="width:${pct}%"></div></div>
-      <p class="hint" style="margin-top:10px">${esc(p.stage || "Starting")}${pct ? ` · ${pct}%` : "…"}</p>
-      <p class="hint">You can leave this page. The import keeps running and the project will show up in your library.</p>
-    </div>`;
+  const head = meta.thumbnail ? `<img class="prev" src="${esc(meta.thumbnail)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()" />` : "";
+  if (view.querySelector(`#pend-${p.id}`)) {        // already on screen: update without flicker
+    const h = view.querySelector(".pend-head");
+    if (h.dataset.sig !== (meta.thumbnail || "")) { h.innerHTML = head; h.dataset.sig = meta.thumbnail || ""; }
+  } else {
+    view.innerHTML = `
+      <div class="panel big-state pend" id="pend-${p.id}">
+        <div class="pend-head" data-sig="${esc(meta.thumbnail || "")}">${head}</div>
+        <div id="pend-proc" class="pend-proc"></div>
+      </div>`;
+  }
+  renderBar($("#pend-proc"), "Downloading", phaseOf(p).pct);
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
     if (!location.hash.startsWith(`#/p/${p.id}`)) return;
@@ -741,14 +977,24 @@ async function drawHeat(p) {
 function paint(p) {
   current = p;
   const status = $("#status"); if (!status) return;
-  if (p.status === "processing") {
-    status.innerHTML = `<div class="hint" style="margin-top:8px">${esc(p.stage)}…</div><div class="progress"><div style="width:${(p.progress * 100).toFixed(0)}%"></div></div>`;
+  const working = p.status === "processing";
+  status.closest(".panel")?.classList.toggle("is-busy", working);
+  if (working) {
+    renderProc(status, phaseOf(p), 56, "compact");
     $("#analyze").disabled = true;
+    $("#analyze").textContent = "Working…";
   } else {
-    $("#analyze").disabled = false;
-    status.innerHTML = p.status === "error" ? `<p class="hint" style="color:var(--bad)">${esc(p.message)}</p>` : "";
+    $("#analyze").disabled = !!p.source_expired;
+    $("#analyze").textContent = p.status === "error" ? "Try again" : p.clips.length ? "Re-analyze" : "Get clips";
+    status.innerHTML = p.status === "error" ? `
+      <div class="proc err" role="alert">${icon("alert")}<div class="proc-txt"><b class="proc-t">We couldn't finish this video</b>
+        <span class="proc-s">Please try again. If it keeps happening, try a shorter video or a different format.</span>
+        <details class="proc-det"><summary>Details</summary><code>${esc(p.message || "Unknown error")}</code></details></div></div>` : "";
   }
-  $("#note").textContent = p.analysis_note || "";
+  $("#note").textContent = /AI ranked/.test(p.analysis_note || "") && p.clips.length ? "Picked by AI" : "";
+  const doneCount = p.clips.filter(c => c.render_state === "done").length;
+  $("#dl-all").hidden = working || doneCount < 2;
+  $("#apply-all").hidden = working || !p.clips.length || !!p.source_expired;
 
   const heat = $("#heat");
   heat.querySelectorAll(".mark").forEach(m => m.remove());
@@ -759,7 +1005,15 @@ function paint(p) {
   });
 
   const grid = $("#clips");
-  if (!p.clips.length) { grid.innerHTML = `<div class="empty"><div class="ico">${icon(p.status === "processing" ? "sparkle" : "scissors")}</div>${p.status === "processing" ? "Working on it… clips appear here as they're found." : "No clips yet. Click <b>Get clips</b>."}</div>`; return; }
+  if (!p.clips.length) {
+    if (working) {
+      if (!grid.querySelector("#clips-proc")) grid.innerHTML = `<div class="clips-wait"><div id="clips-proc"></div>${LEAVE_NOTE}${skeletonShorts(4)}</div>`;
+      renderProc($("#clips-proc"), phaseOf(p), 120, "big");
+    } else {
+      grid.innerHTML = `<div class="empty"><div class="ico">${icon("scissors")}</div>No clips yet. Click <b>Get clips</b> and your shorts will appear here.</div>`;
+    }
+    return;
+  }
   const existing = new Map([...grid.querySelectorAll(".clip-card")].map(el => [el.dataset.id, el]));
   const frag = document.createDocumentFragment();
   p.clips.forEach(c => {
@@ -781,27 +1035,26 @@ function clipCard(p, c) {
   if (c.render_state === "done" && c.render) {
     media = `<video src="/media/${p.id}/clips/${c.render.file}?v=${c.render.at}" poster="/media/${p.id}/clips/${c.render.thumb}?v=${c.render.at}" controls preload="none" playsinline></video>`;
   } else if (c.render_state === "rendering" || c.render_state === "queued") {
-    media = `<div class="state"><div class="spinner"></div>${c.render_state === "queued" ? "Queued" : "Rendering…"}</div>`;
+    media = `<div class="state making">${ring(null, 44)}<span>${c.render_state === "queued" ? "Up next" : "Creating your short…"}</span></div>`;
   } else if (c.render_state === "error") {
-    media = `<div class="state" style="color:var(--bad)">Render failed<br><small>${esc((c.render_error || "").slice(0, 160))}</small></div>`;
+    media = `<div class="state" style="color:var(--bad)">${icon("alert")}<br>This short didn't render.<br><small class="muted">Press <b>Render</b> to try again.</small></div>`;
   } else {
     media = `<div class="state">Not rendered yet</div>`;
   }
   el.innerHTML = `
-    <div class="media ${cls}">${media}
-      ${c.source !== "manual" ? `<span class="score ${sc}" title="Virality score">${c.score}</span>` : ""}
-      <span class="tag src">${c.source === "ai" ? "AI" : c.source === "signals" ? "signals" : "manual"}</span>
-    </div>
+    <div class="media ${cls}">${media}</div>
     <div class="body">
       <h3>${esc(c.title)}</h3>
-      <div class="muted" style="font-size:.8rem">${fmt(c.start)} → ${fmt(c.end)} · ${(c.end - c.start).toFixed(0)}s</div>
+      <div class="clip-meta"><span class="muted">${(c.end - c.start).toFixed(0)}s · from ${fmt(c.start).replace(/\.\d$/, "")}</span>
+        ${c.source !== "manual" ? `<span class="vir ${sc}" title="How likely this clip is to perform well (0–100)"><span class="vir-l">Virality</span><span class="vir-bar"><i style="width:${Math.max(4, Math.min(100, c.score))}%"></i></span><b>${c.score}</b></span>` : ""}</div>
       ${c.reason ? `<div class="reason">${esc(c.reason)}</div>` : ""}
       ${c.hashtags?.length ? `<div class="tags">${esc(c.hashtags.join(" "))}</div>` : ""}
       ${postedBadges(c.id)}
       <div class="row">
-        ${c.render_state === "done" ? `<button class="btn sm accent" data-act="post">${icon("send")} Post</button>` : ""}
-        <button class="btn sm" data-act="edit">${icon("edit")} Edit</button>
-        ${c.render_state === "done" ? `<a class="btn sm" href="/media/${p.id}/clips/${c.render.file}?download=1&name=${slug(c.title)}.mp4">${icon("download")} Download</a>` : `<button class="btn sm" data-act="render">Render</button>`}
+        ${c.render_state === "done" ? `<a class="btn sm primary" href="/media/${p.id}/clips/${c.render.file}?download=1&name=${slug(c.title)}.mp4" download>${icon("download")} Download</a>`
+          : p.source_expired || ["rendering", "queued"].includes(c.render_state) ? "" : `<button class="btn sm primary" data-act="render">Render</button>`}
+        ${p.source_expired ? "" : `<button class="btn sm" data-act="edit">${icon("edit")} Edit</button>`}
+        ${c.render_state === "done" ? `<button class="btn sm ghost" data-act="post">${icon("send")} Post</button>` : ""}
         <button class="icon-btn" data-act="copy" title="Copy title + hashtags" aria-label="Copy title and hashtags">${icon("copy")}</button>
         <button class="icon-btn" data-act="del" title="Delete clip" aria-label="Delete clip">${icon("trash")}</button>
       </div>
@@ -818,7 +1071,7 @@ function clipCard(p, c) {
 }
 
 function defaultRender() {
-  return { ...(INFO?.render_defaults || {}), aspect: $("#a-aspect")?.value || "9:16", captions: $("#a-captions")?.checked ?? true };
+  return lookToRender(LOOK, $("#a-aspect")?.value || prefs.aspect || "9:16");
 }
 
 async function startAnalyze(pid) {
@@ -849,56 +1102,219 @@ function schedulePoll(p) {
 }
 
 // --------------------------------------------------------------- editor --
-let edClip = null;
-function openEditor(cid) {
-  const p = current, c = p.clips.find(x => x.id === cid); if (!c) return;
-  edClip = c;
-  const s = { ...(INFO?.render_defaults || {}), ...(c.render?.settings || defaultRender()) };
-  $("#e-src").src = `/media/${p.id}/${p.source}#t=${c.start}`;
-  $("#e-title").textContent = c.title;
-  $("#e-start").value = c.start; $("#e-end").value = c.end; $("#e-start").max = $("#e-end").max = p.video.duration;
-  $("#e-name").value = c.title; $("#e-hook").value = c.hook || ""; $("#e-tags").value = (c.hashtags || []).join(" ");
-  $("#e-aspect").value = s.aspect; $("#e-fit").value = s.fit; $("#e-cropx").value = s.crop_x;
-  $("#e-captions").checked = s.captions; $("#e-style").value = s.caption_style; $("#e-pos").value = s.caption_position;
-  $("#e-showhook").checked = s.show_hook;
-  $("#e-out").innerHTML = c.render_state === "done" ? `<div class="hint">Current render</div><video controls playsinline src="/media/${p.id}/clips/${c.render.file}?v=${c.render.at}"></video>` : "";
-  updateLen(); updateCrop();
-  $("#editor").showModal();
+// One clip at a time: trim on a timeline, style (captions/layout/border), caption text, details.
+let edClip = null, edLook = { ...LOOK }, edBar = "#000000", edWin = [0, 1], edLines = [], edCapTouched = false,
+  edCapReset = false, edPrevStyle = "bold";
+const edTranscript = { pid: null, words: [] };
+const BAR_COLORS = [["#000000", "Black"], ["#ffffff", "White"], ["#c6f432", "Lime"], ["#1d1d20", "Charcoal"]];
+const edDur = () => current?.video?.duration || 0;
+const tfmt = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s.toFixed(1).padStart(4, "0")}`; };
+
+function edTab(name) {
+  $$("#editor .ed-tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
+  $$("#editor .ed-pane").forEach(p => { p.hidden = p.dataset.pane !== name; });
 }
-function updateLen() { $("#e-len").textContent = `${(($("#e-end").value - $("#e-start").value) || 0).toFixed(1)}s`; }
+$$("#editor .ed-tabs [data-tab]").forEach(b => b.onclick = () => edTab(b.dataset.tab));
+
+// ---- trim timeline
+function edRange() { return [+$("#e-start").value, +$("#e-end").value]; }
+function edSetRange(s, e, fromLines = false) {
+  const D = edDur();
+  s = Math.max(0, Math.min(s, D - 1)); e = Math.min(D, Math.max(e, s + 1));
+  $("#e-start").value = s.toFixed(2); $("#e-end").value = e.toFixed(2);
+  if (s < edWin[0] || e > edWin[1]) { const pad = Math.max(10, (e - s) * 0.5); edWin = [Math.max(0, s - pad), Math.min(D, e + pad)]; }
+  drawTrim();
+  if (!fromLines) buildLines(true);
+}
+function drawTrim() {
+  const [s, e] = edRange(), [w0, w1] = edWin, span = (w1 - w0) || 1;
+  const sel = $("#e-sel");
+  sel.style.left = `${((s - w0) / span) * 100}%`; sel.style.width = `${((e - s) / span) * 100}%`;
+  $("#e-w0").textContent = tfmt(w0); $("#e-w1").textContent = tfmt(w1);
+  $("#e-len").textContent = `${(e - s).toFixed(1)}s clip`;
+  $("#e-in-t").textContent = tfmt(s); $("#e-out-t").textContent = tfmt(e);
+  $("#e-hin").setAttribute("aria-valuetext", tfmt(s)); $("#e-hout").setAttribute("aria-valuetext", tfmt(e));
+}
+function trackTime(clientX) {
+  const r = $("#e-track").getBoundingClientRect(), [w0, w1] = edWin;
+  return w0 + Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * (w1 - w0);
+}
+["in", "out"].forEach(which => {
+  const h = $(which === "in" ? "#e-hin" : "#e-hout");
+  h.onpointerdown = ev => {
+    ev.preventDefault(); ev.stopPropagation(); h.setPointerCapture(ev.pointerId);
+    const move = m => {
+      const t = trackTime(m.clientX), [s, e] = edRange();
+      if (which === "in") edSetRange(Math.min(t, e - 1), e); else edSetRange(s, Math.max(t, s + 1));
+      $("#e-src").currentTime = which === "in" ? +$("#e-start").value : +$("#e-end").value;
+    };
+    h.onpointermove = move;
+    h.onpointerup = () => { h.onpointermove = null; h.onpointerup = null; };
+  };
+  h.onkeydown = ev => {
+    if (!["ArrowLeft", "ArrowRight"].includes(ev.key)) return;
+    ev.preventDefault();
+    const d = (ev.key === "ArrowLeft" ? -1 : 1) * (ev.shiftKey ? 1 : 0.1), [s, e] = edRange();
+    which === "in" ? edSetRange(s + d, e) : edSetRange(s, e + d);
+  };
+});
+$("#e-track").onpointerdown = ev => { if (!ev.target.closest(".trim-h")) $("#e-src").currentTime = trackTime(ev.clientX); };
+$$("#editor .nudge [data-n]").forEach(b => b.onclick = () => {
+  const [s, e] = edRange(), d = +b.dataset.d;
+  b.dataset.n === "in" ? edSetRange(s + d, e) : edSetRange(s, e + d);
+});
+$("#e-set-in").onclick = () => { const [, e] = edRange(); edSetRange(Math.min($("#e-src").currentTime, e - 1), e); };
+$("#e-set-out").onclick = () => { const [s] = edRange(); edSetRange(s, Math.max($("#e-src").currentTime, s + 1)); };
+$("#e-src").addEventListener("timeupdate", () => {
+  const v = $("#e-src"), [w0, w1] = edWin;
+  $("#e-head").style.left = `${Math.min(100, Math.max(0, ((v.currentTime - w0) / ((w1 - w0) || 1)) * 100))}%`;
+  if (v.dataset.stopAt && v.currentTime >= +v.dataset.stopAt) { v.pause(); delete v.dataset.stopAt; }
+});
+$("#e-play").onclick = () => {
+  const v = $("#e-src"), [s, e] = edRange();
+  if (!v.paused && v.dataset.stopAt) { v.pause(); return; }
+  v.muted = false; v.currentTime = s; v.dataset.stopAt = e; v.play().catch(() => {});
+};
+
+// ---- caption lines
+function edWords(useEdit = true) {
+  const [s, e] = edRange();
+  let words = edTranscript.words;
+  const ce = useEdit && !edCapReset ? edClip?.caption_edit : null;
+  if (ce) words = [...words.filter(w => w.end <= ce.start || w.start >= ce.end), ...(ce.words || [])].sort((a, b) => a.start - b.start);
+  return words.filter(w => w.end > s && w.start < e);
+}
+function buildLines(keepEdits = false) {
+  const edits = keepEdits ? new Map(edLines.map((l, i) => [l.start.toFixed(2), $(`#e-lines input[data-i="${i}"]`)?.value])) : new Map();
+  const words = edWords(), lines = [];
+  let cur = null;
+  words.forEach(w => {
+    if (!cur || cur.words.length >= 8 || w.start - cur.end > 0.7 || /[.?!]$/.test(cur.words.at(-1).word)) {
+      cur = { start: w.start, end: w.end, words: [] }; lines.push(cur);
+    }
+    cur.words.push(w); cur.end = w.end;
+  });
+  edLines = lines;
+  const box = $("#e-lines");
+  box.innerHTML = lines.length ? lines.map((l, i) => {
+    const orig = l.words.map(w => w.word).join(" ");
+    const val = edits.has(l.start.toFixed(2)) ? edits.get(l.start.toFixed(2)) : orig;
+    return `<div class="cap-line"><span class="t">${tfmt(l.start - edRange()[0])}</span>
+      <input data-i="${i}" value="${esc(val ?? "")}" aria-label="Caption line at ${tfmt(l.start)}" />
+      <button type="button" class="icon-btn" data-clear="${i}" aria-label="Hide this line" title="Hide this line">${icon("x")}</button></div>`;
+  }).join("") : `<p class="hint">No speech was found in this part of the video, so there are no captions to edit.</p>`;
+}
+$("#e-lines").addEventListener("input", () => { edCapTouched = true; });
+$("#e-lines").addEventListener("click", e => {
+  const b = e.target.closest("[data-clear]"); if (!b) return;
+  const inp = $(`#e-lines input[data-i="${b.dataset.clear}"]`); inp.value = ""; inp.focus(); edCapTouched = true;
+});
+$("#e-lines").addEventListener("focusin", e => {      // jump the player to the line being edited
+  const i = e.target.dataset?.i; if (i == null || !edLines[i]) return;
+  $("#e-src").currentTime = edLines[i].start;
+});
+$("#e-cap-reset").onclick = () => { edCapReset = true; edCapTouched = false; buildLines(false); toast("Captions reset to the original transcript"); };
+function linesToWords() {
+  const out = [];
+  edLines.forEach((l, i) => {
+    const tokens = ($(`#e-lines input[data-i="${i}"]`)?.value || "").trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return;
+    if (tokens.length === l.words.length) {
+      tokens.forEach((t, k) => out.push({ start: l.words[k].start, end: l.words[k].end, word: t.slice(0, 60) }));
+    } else {                                       // word count changed: spread the line's time evenly
+      const step = (l.end - l.start) / tokens.length;
+      tokens.forEach((t, k) => out.push({ start: +(l.start + k * step).toFixed(3), end: +(l.start + (k + 0.92) * step).toFixed(3), word: t.slice(0, 60) }));
+    }
+  });
+  return out;
+}
+$("#e-capon").onchange = e => {
+  if (e.target.checked) edLook.style = edPrevStyle || "bold";
+  else { if (edLook.style !== "none") edPrevStyle = edLook.style; edLook.style = "none"; }
+  edRenderLook(); syncCapToggle();
+};
+function syncCapToggle() {
+  $("#e-capon").checked = edLook.style !== "none";
+  $("#e-capwrap").classList.toggle("off", edLook.style === "none");
+}
+
+// ---- style pane
+function edRenderLook() {
+  $("#e-look").innerHTML = lookPickerHtml(edLook);
+  bindLookPicker($("#e-look"), edLook, () => { if (edLook.style !== "none") edPrevStyle = edLook.style; syncCapToggle(); updateCrop(); });
+  updateCrop();
+}
+function edRenderBars() {
+  const custom = !BAR_COLORS.some(([c]) => c.toLowerCase() === edBar.toLowerCase());
+  $("#e-bars").innerHTML = BAR_COLORS.map(([c, n]) =>
+    `<button type="button" class="swatch" data-c="${c}" style="background:${c}" aria-label="${n}" title="${n}" aria-pressed="${c.toLowerCase() === edBar.toLowerCase()}"></button>`).join("") +
+    `<label class="swatch custom" title="Any colour" aria-pressed="${custom}" style="${custom ? `background:${edBar}` : ""}">${icon("plus")}<input type="color" id="e-barpick" value="${edBar}" aria-label="Custom border colour" /></label>`;
+}
+$("#e-bars").addEventListener("click", e => { const b = e.target.closest("[data-c]"); if (!b) return; edBar = b.dataset.c; edRenderBars(); });
+$("#e-bars").addEventListener("input", e => { if (e.target.id === "e-barpick") { edBar = e.target.value; edRenderBars(); } });
+
 function updateCrop() {
   const box = $("#e-crop");
   const [W, H] = $("#e-aspect").value.split(":").map(Number);
   const vw = current?.video?.width, vh = current?.video?.height;
-  const fit = $("#e-fit").value;
+  const fit = edLook.fit;
   $("#e-cropx-wrap").style.display = fit === "crop" ? "" : "none";
+  $("#e-bar-wrap").hidden = fit !== "fit";
   if (fit !== "crop" || !vw || W / H >= vw / vh) { box.style.display = "none"; return; }
   const frac = (W / H) / (vw / vh), x = +$("#e-cropx").value;
   box.style.display = "block"; box.style.width = `${frac * 100}%`; box.style.left = `${(1 - frac) * x * 100}%`;
 }
-["#e-start", "#e-end"].forEach(s => $(s).oninput = updateLen);
-["#e-aspect", "#e-fit", "#e-cropx"].forEach(s => $(s).oninput = updateCrop);
-$("#e-close").onclick = () => { $("#e-src").pause(); $("#editor").close(); };
+["#e-aspect", "#e-cropx"].forEach(s => $(s).oninput = updateCrop);
+
+// ---- open / close / save
+async function openEditor(cid) {
+  const p = current, c = p.clips.find(x => x.id === cid); if (!c) return;
+  edClip = c; edCapTouched = false; edCapReset = false;
+  const s = { ...(INFO?.render_defaults || {}), ...(c.render?.settings || defaultRender()) };
+  const v = $("#e-src");
+  v.pause(); delete v.dataset.stopAt; v.muted = false;
+  v.src = `/media/${p.id}/${p.source}#t=${c.start}`;
+  $("#e-title").textContent = c.title || "Edit clip";
+  $("#e-name").value = c.title || ""; $("#e-hook").value = c.hook || ""; $("#e-tags").value = (c.hashtags || []).join(" ");
+  $("#e-aspect").value = s.aspect || "9:16"; $("#e-cropx").value = s.crop_x ?? 0.5;
+  edLook = c.render?.settings ? renderToLook(c.render.settings) : { ...LOOK };
+  edPrevStyle = edLook.style !== "none" ? edLook.style : "bold";
+  edBar = /^#[0-9a-f]{6}$/i.test(s.bar_color || "") ? s.bar_color : "#000000";
+  const pad = Math.max(15, (c.end - c.start) * 0.6);
+  edWin = [Math.max(0, c.start - pad), Math.min(p.video.duration, c.end + pad)];
+  $("#e-start").value = c.start; $("#e-end").value = c.end;
+  drawTrim(); edRenderLook(); edRenderBars(); syncCapToggle();
+  $("#e-out").innerHTML = c.render_state === "done"
+    ? `<div class="hint">Current version</div><video controls playsinline preload="none" poster="/media/${p.id}/clips/${c.render.thumb}?v=${c.render.at}" src="/media/${p.id}/clips/${c.render.file}?v=${c.render.at}"></video>` : "";
+  edTab("style");
+  $("#e-lines").innerHTML = `<p class="hint">Loading captions…</p>`;
+  $("#editor").showModal();
+  if (edTranscript.pid !== p.id) {
+    const t = await api(`/api/projects/${p.id}/transcript`).catch(() => ({ segments: [] }));
+    edTranscript.pid = p.id; edTranscript.words = (t.segments || []).flatMap(sg => sg.words || []);
+  }
+  if (edClip === c) buildLines(false);
+}
+function closeEditor() { $("#e-src").pause(); $("#editor").close(); }
+$("#e-close").onclick = closeEditor;
+$("#e-cancel").onclick = closeEditor;
 $("#editor").addEventListener("close", () => $("#e-src").pause());
-$("#e-set-in").onclick = () => { $("#e-start").value = $("#e-src").currentTime.toFixed(2); updateLen(); };
-$("#e-set-out").onclick = () => { $("#e-end").value = $("#e-src").currentTime.toFixed(2); updateLen(); };
-$("#e-play").onclick = () => {
-  const v = $("#e-src"), s = +$("#e-start").value, e = +$("#e-end").value;
-  v.muted = false; v.currentTime = s; v.play();
-  v.ontimeupdate = () => { if (v.currentTime >= e) { v.pause(); v.ontimeupdate = null; } };
-};
 $("#e-render").onclick = async () => {
-  const p = current, c = edClip;
+  const p = current, c = edClip, [start, end] = edRange();
+  const body = {
+    start, end, title: $("#e-name").value.trim() || c.title, hook: $("#e-hook").value.trim(),
+    hashtags: $("#e-tags").value.split(/\s+/).filter(Boolean).map(t => t.startsWith("#") ? t : `#${t}`),
+  };
+  if (edCapTouched) body.caption_edit = { start, end, words: linesToWords() };
+  else if (edCapReset) body.clear_caption_edit = true;
+  const btn = $("#e-render"); btn.disabled = true; btn.textContent = "Saving…";
   try {
-    await api(`/api/projects/${p.id}/clips/${c.id}`, { method: "PATCH", body: {
-      start: +$("#e-start").value, end: +$("#e-end").value, title: $("#e-name").value, hook: $("#e-hook").value,
-      hashtags: $("#e-tags").value.split(/\s+/).filter(Boolean).map(t => t.startsWith("#") ? t : `#${t}`) } });
-    await api(`/api/projects/${p.id}/clips/${c.id}/render`, { method: "POST", body: {
-      aspect: $("#e-aspect").value, fit: $("#e-fit").value, crop_x: +$("#e-cropx").value,
-      captions: $("#e-captions").checked, caption_style: $("#e-style").value,
-      caption_position: +$("#e-pos").value, show_hook: $("#e-showhook").checked } });
-    $("#editor").close(); toast("Rendering…"); refresh();
+    await api(`/api/projects/${p.id}/clips/${c.id}`, { method: "PATCH", body });
+    await api(`/api/projects/${p.id}/clips/${c.id}/render`, { method: "POST",
+      body: lookToRender(edLook, $("#e-aspect").value, { crop_x: +$("#e-cropx").value, bar_color: edBar }) });
+    closeEditor(); toast("Saved. Re-making your clip…"); refresh();
   } catch (e) { fail(e); }
+  finally { btn.disabled = false; btn.innerHTML = "Save &amp; re-make clip"; }
 };
 
 // =========================================================== analytics ==
@@ -1312,11 +1728,49 @@ const FEATURES = [
   ["folder", "Organised in folders", "Keep streams, podcasts and client work apart. Drag projects between folders and search everything."],
   ["chart", "Analytics", "See what you've produced, your score distribution, top clips and the hashtags that keep coming up."],
 ];
+// Real ClipForge output: made by running "Tears of Steel" (Blender Foundation, CC BY 3.0)
+// through the normal pipeline (Whisper + signals -> top moments -> 9:16 render with captions).
 const DEMO_CLIPS = [
-  { score: 94, words: ["NO", "WAY", "HE", "DID", "THAT"], hot: 1, title: "The jump nobody expected", hue: 250 },
-  { score: 88, words: ["THIS", "CHANGED", "EVERYTHING"], hot: 1, title: "Why I quit my job", hue: 330 },
-  { score: 81, words: ["WATCH", "THE", "LEFT", "SIDE"], hot: 2, title: "Clutch 1v4 in overtime", hue: 160 },
+  { src: "/demo/demo-1.mp4?v=2", poster: "/demo/demo-1.jpg?v=2", score: 95, len: 21, style: "Bold captions", title: "“All systems go!”", hue: 250 },
+  { src: "/demo/demo-2.mp4?v=2", poster: "/demo/demo-2.jpg?v=2", score: 89, len: 20, style: "Neon captions", title: "“You're a jerk, Tom.”", hue: 330 },
+  { src: "/demo/demo-3.mp4?v=2", poster: "/demo/demo-3.jpg?v=2", score: 88, len: 22, style: "Boxed captions", title: "“You broke my heart.”", hue: 160 },
 ];
+const DEMO_CREDIT = `Real ClipForge output from <a href="https://mango.blender.org" target="_blank" rel="noopener">Tears of Steel</a> by the Blender Foundation, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.`;
+
+function bindDemoVideos(root) {
+  const vids = $$("video.demo-v", root);
+  if (!vids.length) return;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const io = "IntersectionObserver" in window ? new IntersectionObserver(entries => entries.forEach(en => {
+    const v = en.target;
+    if (en.isIntersecting && !reduce && !v.dataset.userPaused) v.play().catch(() => {});
+    else if (!en.isIntersecting) v.pause();
+  }), { threshold: 0.35 }) : null;
+  vids.forEach(v => {
+    io ? io.observe(v) : (!reduce && v.play().catch(() => {}));
+    const wrap = v.closest(".phone");
+    const sound = $(".snd", wrap), playBtn = $(".dplay", wrap);
+    const sync = () => {
+      wrap.classList.toggle("paused", v.paused);
+      sound.innerHTML = icon(v.muted ? "volumeOff" : "volume");
+      sound.setAttribute("aria-label", v.muted ? "Turn sound on" : "Turn sound off");
+      playBtn.setAttribute("aria-label", v.paused ? "Play clip" : "Pause clip");
+    };
+    v.addEventListener("play", sync); v.addEventListener("pause", sync); v.addEventListener("volumechange", sync);
+    sound.onclick = e => {
+      e.stopPropagation();
+      const turnOn = v.muted;
+      vids.forEach(o => { o.muted = true; });          // only one clip makes sound at a time
+      v.muted = !turnOn;
+      if (turnOn) { delete v.dataset.userPaused; v.play().catch(() => {}); }
+    };
+    playBtn.onclick = () => {
+      if (v.paused) { delete v.dataset.userPaused; v.play().catch(() => {}); }
+      else { v.dataset.userPaused = "1"; v.pause(); }
+    };
+    sync();
+  });
+}
 
 function renderLanding() {
   setCrumbs([]);
@@ -1337,14 +1791,20 @@ function renderLanding() {
       <div class="cta"><a class="btn primary lg" href="#/signup">Create your account</a><a class="btn ghost lg" href="#/signin">Sign in</a></div>
       <div class="works-with">Works with <span class="plats">${["youtube", "tiktok", "instagram", "x", "twitch", "facebook", "vimeo", "drive"].map(p => `<span title="${plat(p).name}">${platSvg(p, 20)}</span>`).join("")}</span></div>
 
-      <div class="lp-demo" aria-hidden="true">
-        <div class="demo-bar"><span class="plat-slot">${platSvg("youtube", 18)}</span><span class="demo-url">youtube.com/watch?v=my-3-hour-stream</span><span class="demo-btn">Get clips in 1 click</span></div>
+      <div class="lp-demo">
+        <div class="demo-bar" aria-hidden="true"><span class="plat-slot">${icon("film")}</span><span class="demo-url">Tears of Steel · 12-minute short film</span><span class="demo-btn">Get clips in 1 click</span></div>
         <div class="demo-clips">${DEMO_CLIPS.map((c, i) => `
-          <div class="demo-clip" style="--h:${c.hue};--d:${i * 0.12}s">
-            <div class="phone"><span class="dscore">${c.score}</span>
-              <div class="dcap">${c.words.map((w, k) => `<span class="${k === c.hot ? "hot" : ""}">${w}</span>`).join(" ")}</div></div>
-            <div class="dtitle">${c.title}</div>
-          </div>`).join("")}</div>
+          <figure class="demo-clip" style="--h:${c.hue};--d:${i * 0.12}s">
+            <div class="phone has-video">
+              <video class="demo-v" src="${c.src}" poster="${c.poster}" muted loop playsinline preload="metadata"
+                aria-label="Example short: ${esc(c.title.replace(/[“”]/g, ""))}, made by ClipForge"></video>
+              <button class="dplay" type="button" aria-label="Pause clip"><span class="dplay-ico">${icon("play")}</span></button>
+              <span class="dscore" title="Virality score">${c.score}</span>
+              <button class="snd" type="button" aria-label="Turn sound on">${icon("volumeOff")}</button>
+            </div>
+            <figcaption class="dtitle">${c.title}<span>${c.len}s · ${c.style}</span></figcaption>
+          </figure>`).join("")}</div>
+        <p class="demo-credit">${DEMO_CREDIT}</p>
       </div>
     </section>
 
@@ -1375,6 +1835,7 @@ function renderLanding() {
     <footer class="lp-foot"><span class="brand"><span class="logo">${icon("play")}</span>ClipForge</span>
       <span class="dim">Clip footage you own or have rights to.</span></footer>
   </div>`;
+  bindDemoVideos(pub);
   pub.onclick = e => {
     const b = e.target.closest("[data-scroll]"); if (!b) return;
     document.getElementById(b.dataset.scroll)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -1439,6 +1900,7 @@ async function renderBilling() {
 
   const statusLine = () => {
     if (!paid) return `<span class="chip-st">Free plan</span>`;
+    if (!b.has_customer && !b.current_period_end) return `<span class="chip-st ok">Complimentary · no charge</span>`;
     if (b.status === "past_due") return `<span class="chip-st bad">${icon("alert")} Payment failed: update your card</span>`;
     if (b.cancel_at_period_end) return `<span class="chip-st warn">Ends ${fmtDate(b.current_period_end)}</span>`;
     return `<span class="chip-st ok">${b.status === "trialing" ? "Trial" : "Active"} · renews ${fmtDate(b.current_period_end)}</span>`;
@@ -1448,6 +1910,7 @@ async function renderBilling() {
   const ctaFor = p => {
     if (!b.stripe_ready && p.id !== "free") return `<button class="btn block" disabled>Not available yet</button>`;
     if (p.id === b.plan) return `<button class="btn block" disabled>${icon("check")} Current plan</button>`;
+    if (paid && !b.has_customer) return `<button class="btn block" disabled>Included in your plan</button>`;
     if (!paid) return `<button class="btn ${p.popular ? "primary" : ""} block" data-buy="${p.id}">Upgrade to ${esc(p.name)}</button>`;
     if (p.id === "free") return `<button class="btn ghost block" data-portal>Cancel in billing portal</button>`;
     return `<button class="btn block" data-portal>Switch in billing portal</button>`;
@@ -1541,7 +2004,7 @@ function authShell(inner) {
         <ul>${["Paste a link or upload a file", "Clips ranked by virality score", "Animated captions and vertical reframing", "Folders and analytics for everything you make"]
           .map(t => `<li>${icon("check")}${t}</li>`).join("")}</ul>
       </div>
-      <div class="art-clips" aria-hidden="true">${DEMO_CLIPS.map((c, i) => `<div class="phone sm" style="--h:${c.hue};--r:${(i - 1) * 7}deg"><span class="dscore">${c.score}</span></div>`).join("")}</div>
+      <div class="art-clips" aria-hidden="true">${DEMO_CLIPS.map((c, i) => `<div class="phone sm has-video" style="--h:${c.hue};--r:${(i - 1) * 7}deg"><img src="${c.poster}" alt="" loading="lazy" /><span class="dscore">${c.score}</span></div>`).join("")}</div>
     </aside>
     <main class="auth-main">
       <a class="auth-back" href="#/">${icon("home")} Back to home</a>
@@ -1742,6 +2205,12 @@ window.addEventListener("resize", () => current && location.hash.startsWith("#/p
         toast(`You're on ${b.plans.find(p => p.id === b.plan)?.name || "your new"} plan. Thanks!`, 5000);
       } catch (e) { fail(e); }
     }
+  }
+  if (params.get("portal") === "return") {
+    // Back from Stripe's billing portal: pull the subscription now (a cancel or plan change shows up
+    // at once, even before or without the webhook).
+    history.replaceState(null, "", location.pathname + "#/billing");
+    if (ME) await api("/api/billing/refresh", { method: "POST" }).catch(() => {});
   }
   refreshPill(); refreshUser();
   route();

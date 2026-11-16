@@ -1,0 +1,37 @@
+# Production stack: ClipForge + Caddy (automatic HTTPS via Let's Encrypt).
+#   1. put DOMAIN=your.domain in ./.env (e.g. clipforge.eastus.cloudapp.azure.com)
+#   2. fill backend/.env (Supabase, Stripe, PUBLIC_URL=https://<DOMAIN>)
+#   3. docker compose up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      CLIPFORGE_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data          # projects (or only job scratch space when S3_BUCKET is set)
+      - ./models:/app/models      # Whisper model cache (downloaded on first analysis)
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env next to docker-compose.yml}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

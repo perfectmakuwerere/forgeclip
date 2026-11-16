@@ -1,8 +1,8 @@
 """Project + folder store backed by Supabase Postgres.
 
-Metadata (projects, clips, folders) lives in Supabase. Media stays on this machine in
-data/projects/<id>/ (source video, transcript.json, signals.json, rendered clips),
-because ffmpeg needs local files and videos are far larger than free-tier storage.
+Metadata (projects, clips, folders) lives in Supabase. Media (source video, thumbnails,
+transcript.json, signals.json, rendered clips) lives in an S3-compatible bucket when S3_BUCKET is set,
+with data/projects/<id>/ as scratch space for ffmpeg; otherwise it stays in data/projects/<id>/.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import config, supa
+from . import config, objstore, supa
 
 _locks: dict[str, threading.RLock] = {}
 _global = threading.Lock()
@@ -62,12 +62,140 @@ def project_dir(pid: str) -> Path:
 
 
 def write_json(pid: str, name: str, data) -> None:
+    if objstore.enabled():
+        objstore.put_json(pid, name, data)
+        return
+    project_dir(pid).mkdir(parents=True, exist_ok=True)
     (project_dir(pid) / name).write_text(json.dumps(data), encoding="utf-8")
 
 
 def read_json(pid: str, name: str, default=None):
-    f = project_dir(pid) / name
+    if objstore.enabled():
+        data = objstore.get_json(pid, name)
+        if data is not None:
+            return data
+    f = project_dir(pid) / name          # local copy (no bucket, or a project from before the bucket)
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else default
+
+
+# ------------------------------------------------------ media + scratch space --
+#
+# Without a bucket, data/projects/<id>/ is the permanent home of a project's media.
+# With a bucket (S3_BUCKET), the bucket is; data/projects/<id>/ is scratch space that a job fills
+# on demand (local()) while it holds the workspace, and that is emptied when the last job using the
+# project lets go. Anything worth keeping is uploaded (persist()) as soon as it is produced.
+
+# Never uploaded: job intermediates and partial downloads.
+_SCRATCH_SUFFIXES = {".wav", ".ass", ".part", ".tmp", ".ytdl", ".imported"}
+_users: dict[str, int] = {}
+_users_lock = threading.Lock()
+
+
+def acquire(pid: str) -> Path:
+    """Mark the project's scratch dir as in use (pair with release())."""
+    with _users_lock:
+        _users[pid] = _users.get(pid, 0) + 1
+    d = project_dir(pid)
+    (d / "clips").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def busy() -> int:
+    """How many jobs currently hold a project's scratch dir (imports, analysis, renders, posts)."""
+    with _users_lock:
+        return sum(_users.values())
+
+
+def release(pid: str) -> None:
+    with _users_lock:
+        n = _users.get(pid, 1) - 1
+        if n > 0:
+            _users[pid] = n
+            return
+        _users.pop(pid, None)
+    if objstore.enabled():
+        try:
+            _clear_scratch(pid)
+        except Exception:  # noqa: BLE001  (never fail a job over cleanup; files get retried next time)
+            import logging
+            logging.getLogger("clipforge").exception("could not clear scratch space of %s", pid)
+
+
+class workspace:
+    """`with store.workspace(pid) as d:` holds the project's scratch dir `d` for the duration."""
+
+    def __init__(self, pid: str):
+        self.pid = pid
+
+    def __enter__(self) -> Path:
+        return acquire(self.pid)
+
+    def __exit__(self, *exc) -> None:
+        release(self.pid)
+
+
+def _clear_scratch(pid: str) -> None:
+    """Upload anything not yet in the bucket (e.g. media from before the bucket was set up), then
+    delete the local copy. Re-checks the user count so a job that just started keeps its files."""
+    d = project_dir(pid)
+    if not d.is_dir():
+        return
+    if supa.select_one("projects", {"id": f"eq.{pid}", "select": "id"}) is None:
+        # Deleted while a job was running: drop the files instead of uploading them again.
+        objstore.delete_project(pid)
+        with _users_lock:
+            if not _users.get(pid):
+                shutil.rmtree(d, ignore_errors=True)
+        return
+    stored = objstore.list_rel(pid)
+    for f in d.rglob("*"):
+        rel = f.relative_to(d).as_posix()
+        if f.is_file() and f.suffix.lower() not in _SCRATCH_SUFFIXES and f.name != "project.json" \
+                and rel not in stored:
+            objstore.upload(pid, rel, f)
+    with _users_lock:
+        if _users.get(pid):
+            return
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def persist(pid: str, rel: str) -> None:
+    """Save a file a job just produced in the project's scratch dir to the bucket (no-op without one).
+    The local copy stays until the workspace is released, so the job can keep using it."""
+    if objstore.enabled():
+        objstore.upload(pid, rel, project_dir(pid) / rel)
+
+
+def local(pid: str, rel: str) -> Path:
+    """Local path of a project file, downloading it from the bucket if needed.
+    Call while holding the workspace. Raises FileNotFoundError if it exists nowhere."""
+    f = project_dir(pid) / rel
+    if f.is_file():
+        return f
+    if objstore.enabled():
+        return objstore.download(pid, rel, f)
+    raise FileNotFoundError(rel)
+
+
+def media_input(pid: str, rel: str) -> "Path | str":
+    """What to hand ffmpeg for reading a file: the local copy if there is one, otherwise a signed
+    bucket URL (ffmpeg seeks over HTTP, so rendering a 30 s clip doesn't fetch a 2 GB source)."""
+    f = project_dir(pid) / rel
+    if f.is_file() or not objstore.enabled():
+        return f
+    return objstore.url(pid, rel, expires=6 * 3600)
+
+
+def has(pid: str, rel: str) -> bool:
+    if (project_dir(pid) / rel).is_file():
+        return True
+    return objstore.enabled() and objstore.exists(pid, rel)
+
+
+def remove(pid: str, rel: str) -> None:
+    (project_dir(pid) / rel).unlink(missing_ok=True)
+    if objstore.enabled():
+        objstore.delete(pid, rel)
 
 
 # --------------------------------------------------------------- conversion --
@@ -81,7 +209,7 @@ def _epoch(iso: str) -> float:
 
 
 _COLS = ("id", "owner", "name", "status", "stage", "progress", "message", "video", "source", "source_url",
-         "platform", "import_meta", "analysis_note", "has_transcript", "clips")
+         "platform", "import_meta", "analysis_note", "has_transcript", "clips", "source_expired")
 
 
 def _to_row(p: dict) -> dict:
@@ -89,7 +217,8 @@ def _to_row(p: dict) -> dict:
     row.update(folder_id=p.get("folder") or None, created_at=_iso(p["created"]),
                source_url=p.get("source_url") or "", platform=p.get("platform") or "upload",
                clips=p.get("clips") or [], message=p.get("message") or "", stage=p.get("stage") or "",
-               analysis_note=p.get("analysis_note") or "", has_transcript=bool(p.get("has_transcript")))
+               analysis_note=p.get("analysis_note") or "", has_transcript=bool(p.get("has_transcript")),
+               source_expired=bool(p.get("source_expired")))
     return row
 
 
@@ -106,8 +235,8 @@ def create(name: str, folder: Optional[str] = None, source_url: str = "", platfo
     if not owner:
         raise ValueError("a project needs an owner")
     pid = uuid.uuid4().hex[:12]
-    project_dir(pid).mkdir(parents=True)
-    (project_dir(pid) / "clips").mkdir()
+    if not objstore.enabled():                 # with a bucket, jobs create scratch dirs on demand
+        (project_dir(pid) / "clips").mkdir(parents=True)
     proj = {
         "id": pid, "name": name, "created": time.time(),
         "status": "uploaded", "stage": "", "progress": 0.0, "message": "",
@@ -148,6 +277,8 @@ def list_all(owner: str) -> list[dict]:
 
 def delete(pid: str) -> None:
     supa.delete("projects", {"id": f"eq.{pid}"})
+    if objstore.enabled():
+        objstore.delete_project(pid)
     shutil.rmtree(project_dir(pid), ignore_errors=True)
 
 

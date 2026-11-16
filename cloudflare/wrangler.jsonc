@@ -1,0 +1,45 @@
+// ClipForge on Cloudflare: a Worker serves the frontend as static assets and forwards /api/* and
+// /media/* to one Container running the app's Docker image (../Dockerfile). See ../DEPLOY.md.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "clipforge",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-29",
+	"upload_source_maps": true,
+	"observability": { "enabled": true },
+
+	// The no-build frontend. Served straight from Cloudflare's edge without waking the container;
+	// only the app's API and media routes reach the Worker code.
+	"assets": {
+		"directory": "../frontend",
+		"binding": "ASSETS",
+		"run_worker_first": ["/api/*", "/media/*"]
+	},
+
+	"containers": [
+		{
+			"class_name": "ClipForgeServer",
+			"scheduling_policy": "durable_object",
+			"images": {
+				"base": {
+					"dockerfile": "../Dockerfile",
+					"build_context": ".."
+				}
+			},
+			"observability": { "enabled": true }
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "CLIPFORGE", "class_name": "ClipForgeServer" }]
+	},
+	"exports": {
+		"ClipForgeServer": { "type": "durable-object", "storage": "sqlite" }
+	},
+
+	// Container size: standard-1 (1/2 vCPU, 4 GiB), standard-2 (1 vCPU, 6 GiB),
+	// standard-3 (2 vCPU, 8 GiB), standard-4 (4 vCPU, 12 GiB). Bigger = faster renders, higher cost.
+	// Everything else (Supabase, R2, Stripe, Groq keys...) is set as secrets: `npm run secrets`.
+	"vars": {
+		"CONTAINER_INSTANCE": "standard-2"
+	}
+}

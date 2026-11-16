@@ -29,7 +29,33 @@ ClipForge uses **Supabase** for sign-in and for all its data. Project `clipforge
 | `posts` | social posting history | owner can read; server writes |
 | `social_connections` | OAuth tokens for YouTube/TikTok/Instagram/X | server only (RLS, no policies) |
 
-Row Level Security is on for every table. Videos, transcripts and rendered clips stay on this computer in `data/projects/<id>/` (ffmpeg needs local files and they're far larger than free-tier storage).
+Row Level Security is on for every table. Videos, transcripts and rendered clips go to an S3-compatible bucket if you set one up (see **Media storage** below); otherwise they stay on this computer in `data/projects/<id>/`.
+
+## Media storage (Cloudflare R2 or any S3 bucket)
+
+With `S3_BUCKET` set, source videos, thumbnails, transcripts and rendered clips live in the bucket. The server's disk is only scratch space: a job downloads what ffmpeg needs, uploads what it produces, and deletes its local files when it finishes. The disk can be wiped at any time between jobs.
+
+- **Uploads** go from the browser straight to the bucket through a signed link. They skip the server and Cloudflare's 100 MB request limit, up to 5 GB per file.
+- **Playback and downloads** redirect to signed links that last one hour, so video traffic never passes through the server.
+- **Re-rendering one clip** reads only the part of the source it needs over HTTP; analysis downloads the source once per job.
+- **Old local projects** upload themselves the first time they're opened, or all at once with `--migrate` below.
+
+**Setup with Cloudflare R2** (10 GB free, then $0.015/GB-month; no download fees)
+1. Cloudflare dashboard → **R2** → **Create bucket** (e.g. `clipforge-media`). Keep it private.
+2. **R2 → Manage API tokens → Create API token**: *Object Read & Write*, limited to that bucket. Copy the key ID, secret and the S3 endpoint `https://<account-id>.r2.cloudflarestorage.com`.
+3. Add to `backend/.env`:
+   ```ini
+   S3_BUCKET=clipforge-media
+   S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   S3_REGION=auto
+   S3_ACCESS_KEY_ID=...
+   S3_SECRET_ACCESS_KEY=...
+   ```
+4. `cd backend` then `.venv\Scripts\python scripts\bucket_setup.py`. This checks access and adds the CORS rule that browser uploads need. If the token can't change bucket settings, the script prints the rule to paste under *R2 → bucket → Settings → CORS Policy*. Re-run it whenever `PUBLIC_URL` changes.
+5. Optional: move existing projects with `scripts\bucket_setup.py --migrate --delete-local`.
+6. Restart ClipForge.
+
+AWS S3 works the same way: leave `S3_ENDPOINT` empty and set `S3_REGION`. `SOURCE_RETENTION_DAYS` deletes old source videos from the bucket too.
 
 **Setup**
 1. `backend/.env` already has `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Add `SUPABASE_SECRET_KEY` from *Dashboard → Project Settings → API Keys → Secret keys*, then restart. It is server-only; never put it in frontend code.
@@ -50,6 +76,18 @@ Plans are defined in `backend/app/billing.py` (`PLANS`): **Free** 3 videos/month
 5. Restart ClipForge. Test card: `4242 4242 4242 4242`, any future date, any CVC.
 
 Upgrades also sync directly when the customer returns from Checkout, so they show up even before the webhook is configured; cancellations and renewals need the webhook. Going live: repeat with the live key (`sk_live_...`) and a live webhook endpoint served over https.
+
+## Sharing it from your PC (free)
+
+Double-click **`run_public.bat`**. It starts ClipForge plus a free Cloudflare quick tunnel and prints a public https address like `https://random-words.trycloudflare.com` (also copied to the clipboard). Needs `cloudflared` (`winget install --id Cloudflare.cloudflared`). Keep the window open and the PC awake; close it to go offline.
+
+- The address changes every time you start it. Add `https://*.trycloudflare.com/**` once to Supabase → *Authentication → URL Configuration → Redirect URLs* so sign-up and password-reset emails work on any of them.
+- No router or firewall changes are needed and only ClipForge is exposed. Stripe webhooks can't target a changing address; subscriptions still update when users return from Checkout and every ~10 minutes.
+- For a fixed address, use a named Cloudflare Tunnel with your own domain, or deploy to a server (below).
+
+## Deploying
+
+See **[DEPLOY.md](DEPLOY.md)** for a step-by-step guide to running ClipForge entirely on Cloudflare. A Worker (`cloudflare/`) serves the frontend and starts a Cloudflare Container that runs the app's Docker image. Media lives in R2, alongside Supabase, Stripe and Groq. Running it on your own server (`docker-compose.cloudflare.yml` or `docker-compose.yml`) is covered at the end.
 
 ## Run it (Windows)
 
@@ -91,6 +129,12 @@ Each network needs a developer app created by whoever runs the server. Open **So
 The redirect URI is `<PUBLIC_URL>/api/social/<youtube|tiktok|instagram|x>/callback`. For TikTok and Instagram, run a tunnel (`cloudflared tunnel --url http://127.0.0.1:8000` or ngrok) and set `PUBLIC_URL` to its https address.
 Tokens are stored server-side in `data/connections.json` (git-ignored) and never sent to the browser. Stats refresh on demand and every ~6 hours when you open Analytics, which builds the follower-trend history.
 
+## Speech-to-text (Groq by default, local Whisper as backup)
+
+Set `GROQ_API_KEY` in `backend/.env` (free key at https://console.groq.com/keys) and ClipForge transcribes with Groq's Whisper large-v3 turbo: seconds per video, about $0.04 per hour of audio, better with accents and mixed languages than the local model. Audio is compressed to 32 kbps MP3 and sent in 10-minute pieces.
+
+If Groq fails for any reason (no key, bad key, no internet, plan limits) the app silently uses local faster-whisper instead. `TRANSCRIBE_PROVIDER=local` forces local; `TRANSCRIBE_LANGUAGE=en` skips language detection. Note that with Groq enabled, users' audio is sent to Groq for transcription; mention this in your privacy policy.
+
 ## Connecting an AI model
 
 Click **Connect AI** in the top-right.
@@ -121,7 +165,8 @@ Register it in `llm/registry.py` (`PROVIDERS["my_model"] = MyModel`) and set `LL
 ```
 backend/app/
   main.py              FastAPI routes + background jobs
-  store.py             file-based project store (data/projects/<id>/) + folders
+  store.py             project store (Supabase) + media/scratch-space helpers
+  objstore.py          S3-compatible bucket (R2, S3...) for media when S3_BUCKET is set
   social.py            OAuth + profile stats for YouTube, TikTok, Instagram, X
   analytics.py         workspace analytics
   llm/                 provider layer: anthropic, openai_compat, registry

@@ -1,0 +1,32 @@
+# Production stack behind a Cloudflare Tunnel: no open ports, no certificates to manage.
+#   1. put TUNNEL_TOKEN=... in ./.env (Cloudflare dashboard -> Zero Trust -> Networks -> Tunnels)
+#   2. fill backend/.env (Supabase, Stripe, R2 bucket, PUBLIC_URL=https://<your hostname>)
+#   3. docker compose -f docker-compose.cloudflare.yml up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      CLIPFORGE_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data          # job scratch space (media lives in the S3_BUCKET)
+      - ./models:/app/models      # Whisper model cache (only used if Groq transcription fails)
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  tunnel:
+    # Cloudflare stops supporting cloudflared releases about a year after they ship, so this tracks
+    # the latest release instead of a pinned tag. `docker compose pull` updates it.
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on: [app]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env next to this file}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

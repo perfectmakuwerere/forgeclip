@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://clipforge.perfectprincessmakuwerere98.workers.dev",
+          "http://127.0.0.1:8000",
+          "http://127.0.0.1:8010",
+          "https://*.trycloudflare.com"
+        ],
+        "methods": [
+          "GET",
+          "HEAD",
+          "PUT"
+        ],
+        "headers": [
+          "content-type"
+        ]
+      },
+      "exposeHeaders": [
+        "ETag"
+      ],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

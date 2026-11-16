@@ -19,7 +19,7 @@ from typing import Callable, Optional
 from starlette.requests import HTTPConnection
 from starlette.responses import JSONResponse
 
-from . import config, store, supa
+from . import store, supa
 
 log = logging.getLogger("clipforge.auth")
 
@@ -88,10 +88,11 @@ def forget(token: str) -> None:
         _cache.pop(hashlib.sha256(token.encode()).hexdigest(), None)
 
 
-def set_cookie(resp, token: str) -> None:
+def set_cookie(resp, token: str, secure: bool) -> None:
     # Access tokens live ~1 h; the browser re-posts the refreshed one. Keep the cookie a day.
-    resp.set_cookie(COOKIE, token, max_age=86400, httponly=True, samesite="lax",
-                    secure=config.PUBLIC_URL.startswith("https://"), path="/")
+    # `secure` follows the scheme this request actually arrived on (https through a tunnel/proxy,
+    # http on 127.0.0.1), so the same server works locally and via its public https address.
+    resp.set_cookie(COOKIE, token, max_age=86400, httponly=True, samesite="lax", secure=secure, path="/")
 
 
 # ------------------------------------------------- one-time import of old data --
@@ -111,7 +112,7 @@ def import_old_data(user_id: str) -> None:
 
 # --------------------------------------------------------------- middleware --
 
-PUBLIC_PATHS = {"/api/info", "/api/auth/session", "/api/auth/logout", "/api/auth/me",
+PUBLIC_PATHS = {"/api/info", "/api/health","/api/auth/session", "/api/auth/logout", "/api/auth/me",
                 "/api/billing/webhook"}   # Stripe calls this; it is verified by signature instead
 
 

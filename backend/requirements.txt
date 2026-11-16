@@ -5,3 +5,7 @@ httpx>=0.27
 numpy>=1.26
 faster-whisper>=1.1
 yt-dlp>=2025.1
+# faster-whisper 1.2.x passes an argument PyAV 19 removed; keep PyAV below 19 until faster-whisper catches up
+av>=12,<19
+# S3-compatible object storage (Cloudflare R2, AWS S3, B2...) for media when S3_BUCKET is set
+boto3>=1.35

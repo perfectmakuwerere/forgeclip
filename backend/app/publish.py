@@ -111,8 +111,8 @@ def start(project_id: str, clip_id: str, targets: list[str], caption: str, title
         raise PublishError("Clip not found")
     if clip.get("render_state") != "done" or not clip.get("render"):
         raise PublishError("Render the clip before posting it.")
-    path = store.project_dir(project_id) / "clips" / clip["render"]["file"]
-    if not path.is_file():
+    rel = f"clips/{clip['render']['file']}"
+    if not store.has(project_id, rel):
         raise PublishError("The rendered file is missing. Render the clip again.")
     targets = [t for t in dict.fromkeys(targets) if t in LIMITS]
     if not targets:
@@ -139,13 +139,28 @@ def start(project_id: str, clip_id: str, targets: list[str], caption: str, title
         "clip_title": clip["title"], "thumb": clip["render"].get("thumb"), "caption": caption, "title": title,
         "targets": {t: {"state": "queued", "progress": 0.0, "url": "", "error": "", "note": ""} for t in targets},
     }
-    _persist(post)
-    with _lock:
-        _live[post["id"]] = post
-    for t in targets:
-        threading.Thread(target=auth.run_as, args=(auth.uid(), _run, post["id"], t, path, caption, title,
-                                                   options.get(t) or {}), daemon=True).start()
+    # Fetch the clip into the project's scratch dir once (from the bucket, if media lives there);
+    # each upload thread holds the scratch dir until it is done with the file.
+    with store.workspace(project_id):
+        try:
+            path = store.local(project_id, rel)
+        except FileNotFoundError:
+            raise PublishError("The rendered file is missing. Render the clip again.") from None
+        _persist(post)
+        with _lock:
+            _live[post["id"]] = post
+        for t in targets:
+            store.acquire(project_id)
+            threading.Thread(target=auth.run_as, args=(auth.uid(), _run_holding, project_id, post["id"], t, path,
+                                                       caption, title, options.get(t) or {}), daemon=True).start()
     return post
+
+
+def _run_holding(project_id: str, *args) -> None:
+    try:
+        _run(*args)
+    finally:
+        store.release(project_id)
 
 
 def _run(post_id: str, platform: str, path: Path, caption: str, title: str, opts: dict) -> None:

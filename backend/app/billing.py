@@ -17,6 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import httpx
 
@@ -85,9 +86,15 @@ def stripe(method: str, path: str, data: Optional[dict] = None, params: Optional
         raise BillingError("STRIPE_SECRET_KEY in backend/.env isn't a Stripe secret key (it should start with sk_test_ "
                            "or sk_live_)." if bad else "Payments aren't set up yet: add STRIPE_SECRET_KEY to backend/.env.", 503)
     headers = {"Authorization": f"Bearer {config.STRIPE_SECRET_KEY}", "Stripe-Version": STRIPE_VERSION}
+    body = None
+    if data:
+        # Encoded here: httpx's `data=` only takes a dict, and Stripe's nested/array fields need
+        # repeated bracketed keys (line_items[0][price]=...), so a list of pairs is required.
+        body = urlencode(_flatten(data))
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
     try:
         r = httpx.request(method, f"{API}{path}", headers=headers, timeout=30,
-                          data=_flatten(data) if data else None, params=_flatten(params) if params else None)
+                          content=body, params=_flatten(params) if params else None)
     except httpx.HTTPError as exc:
         raise BillingError(f"Couldn't reach Stripe: {exc}", 502) from exc
     body = r.json() if r.content else {}
@@ -244,8 +251,16 @@ def portal(owner: str, origin: str) -> str:
     if not row or not row.get("stripe_customer_id"):
         raise BillingError("No billing account yet. Choose a plan first.")
     s = stripe("POST", "/billing_portal/sessions", {"customer": row["stripe_customer_id"],
-                                                    "return_url": f"{origin}/#/billing"})
+                                                    "return_url": f"{origin}/?portal=return#/billing"})
     return s["url"]
+
+
+def refresh(owner: str) -> None:
+    """Re-read the user's subscription from Stripe now (used when they come back from the portal)."""
+    row = _row(owner)
+    sub_id = (row or {}).get("stripe_subscription_id")
+    if sub_id:
+        _apply_subscription(owner, stripe("GET", f"/subscriptions/{sub_id}"))
 
 
 def _apply_subscription(owner: str, sub: dict) -> None:

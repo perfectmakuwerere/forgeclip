@@ -54,12 +54,18 @@ def chunk_words(words: list[dict], max_words: int, max_gap: float = 0.6) -> list
     return chunks
 
 
+SIZES = {"s": 0.8, "m": 1.0, "l": 1.25}
+
+
 def build_ass(path: Path, words: list[dict], clip_start: float, clip_end: float,
               width: int, height: int, style: str = "bold", position: float = 0.72,
-              hook: str = "", show_captions: bool = True) -> Path:
+              hook: str = "", show_captions: bool = True, size: str = "m") -> Path:
+    if style == "none":
+        show_captions = False
     st = STYLES.get(style, STYLES["bold"])
+    position = min(max(float(position), 0.12), 0.9)          # keep captions inside the safe area
     ref = min(width, height) if width > height else height  # scale with the short-form frame
-    size = int(ref * st["size"] * (1.25 if width > height else 1))
+    size = int(ref * st["size"] * (1.25 if width > height else 1) * SIZES.get(size, 1.0))
     outline = max(1, round(ref * st["outline"]))
     shadow = round(ref * st["shadow"])
     margin_v = int((1 - position) * height)

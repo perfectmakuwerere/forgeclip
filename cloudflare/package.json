@@ -1,0 +1,15 @@
+{
+  "name": "clipforge-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "secrets": "node scripts/push-secrets.mjs",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "logs": "wrangler tail"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "wrangler": "4.163.0"
+  }
+}
