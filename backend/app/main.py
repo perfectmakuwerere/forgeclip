@@ -314,16 +314,31 @@ def _autorun_in(pid: str, after: AutorunIn) -> None:
         _set_status(pid, status="error", stage="Failed", message=str(exc)[:600])
 
 
-def _finish_source(pid: str, src: "Path | str", name: str) -> None:
-    """Probe + thumbnail a new source video, then save it. `src` is a file in the project's scratch dir
-    (uploaded to the bucket here, if there is one) or a signed URL of a source already in the bucket."""
+def _finish_source(pid: str, src: "Path | str", name: str, **status) -> None:
+    """Probe + thumbnail a new source video and mark the project's video as ready (plus any `status`
+    fields, so the page can switch straight to "Processing"). `src` is a file in the project's scratch
+    dir or a signed URL of a source already in the bucket.
+
+    A local file is uploaded to the bucket in the background: the project page and the analysis that
+    follows both use the local copy (the scratch dir is held until the upload finishes), so a large
+    upload never delays the user seeing their video being processed."""
     meta = media.probe(src)
     with store.workspace(pid) as pdir:
         media.thumbnail(src, pdir / "thumb.jpg", min(5, meta["duration"] / 3))
         store.persist(pid, "thumb.jpg")
-        if isinstance(src, Path):
-            store.persist(pid, name)
-    store.update(pid, lambda p: p.update(video=meta, source=name))
+    if isinstance(src, Path) and objstore.enabled():
+        store.acquire(pid)                     # keeps the local file until the upload is done
+        threading.Thread(target=_upload_source, args=(pid, name), daemon=True, name=f"upload-{pid}").start()
+    store.update(pid, lambda p: p.update(video=meta, source=name, **status))
+
+
+def _upload_source(pid: str, name: str) -> None:
+    try:
+        store.persist(pid, name)
+    except Exception:  # noqa: BLE001  (the scratch-dir cleanup uploads anything still missing)
+        log.exception("background upload of %s/%s failed", pid, name)
+    finally:
+        store.release(pid)
 
 
 def _import(pid: str, url: str, after: AutorunIn) -> None:
@@ -340,9 +355,12 @@ def _import(pid: str, url: str, after: AutorunIn) -> None:
             for leftover in pdir.glob("source.*"):
                 if leftover != path and leftover.is_file():
                     leftover.unlink(missing_ok=True)
-            _set_status(pid, stage="Saving video" if objstore.enabled() else "Reading video", progress=1.0)
-            _finish_source(pid, path, path.name)
-            _set_status(pid, status="uploaded", stage="", progress=0.0, message="")
+            _set_status(pid, stage="Reading video", progress=1.0)
+            # Video ready and, if clips are coming, already "processing" in the same update, so the
+            # page jumps straight from the download bar to the processing view.
+            nxt = dict(status="processing", stage="Starting", progress=0.0, message="") if after.mode != "none" \
+                else dict(status="uploaded", stage="", progress=0.0, message="")
+            _finish_source(pid, path, path.name, **nxt)
             _autorun(pid, after)
     except (importer.ImportError_, media.MediaError) as exc:
         _set_status(pid, status="error", stage="Import failed", message=str(exc)[:600])

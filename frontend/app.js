@@ -948,14 +948,16 @@ function renderPending(p) {
         <div id="pend-proc" class="pend-proc"></div>
       </div>`;
   }
-  renderBar($("#pend-proc"), "Downloading", phaseOf(p).pct);
+  // Download finished, video being checked: a few seconds, then the processing page takes over.
+  const readying = /Reading video/.test(p.stage || "");
+  renderBar($("#pend-proc"), readying ? "Getting your video ready" : "Downloading", readying ? null : phaseOf(p).pct);
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
     if (!location.hash.startsWith(`#/p/${p.id}`)) return;
     const np = await api(`/api/projects/${p.id}`).catch(() => null);
     if (!np) return;
     if (np.video) route(); else renderPending(np);
-  }, 1200);
+  }, readying ? 600 : 1000);
 }
 
 async function drawHeat(p) {
